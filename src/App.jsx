@@ -15,7 +15,7 @@ function App() {
   useEffect(() => {
     console.log("🔍 [App] Checking authentication...");
 
-    fetch("http://localhost:3000/auth/check-auth", { credentials: "include" })
+    fetch("https://backend-manpro.web.id/auth/check-auth", { credentials: "include" })
       .then(async (res) => {
         const data = await res.json();
         if (data.authenticated) {
