@@ -23,7 +23,7 @@ function App() {
           console.log("✅ [App] Authenticated user:", data.user);
           setUser(data.user);
         } else {
-          console.warn("⚠️ [App] User not authenticated, redirecting to login.");
+          console.warn("⚠️ [App] User not authenticated.");
           setUser(null);
         }
       })
@@ -37,9 +37,11 @@ function App() {
       });
   }, []);
 
-  // 🧩 Load modul ADMIN saat user admin
+  // Load modules berdasarkan role
   useEffect(() => {
-    if (user?.is_admin) {
+    if (!user) return;
+
+    if (user.is_admin) {
       console.log("🏢 [App] Loading admin modules dynamically...");
       Promise.all([
         import("./roles/admin/AdminApp.jsx"),
@@ -48,7 +50,7 @@ function App() {
         import("./roles/admin/pages/Dashboard.jsx"),
         import("./roles/admin/pages/DetailProject.jsx")
       ])
-        .then(([AdminApp, Project, UserManagement,Dashboard, DetailProject]) => {
+        .then(([AdminApp, Project, UserManagement, Dashboard, DetailProject]) => {
           setAdminModules({
             AdminApp: AdminApp.default,
             Project: Project.default,
@@ -58,10 +60,7 @@ function App() {
           });
         })
         .catch((err) => console.error("🔥 [App] Failed to load admin modules:", err));
-    }
-
-    // 🧩 Load modul USER saat user bukan admin
-    if (user && !user.is_admin) {
+    } else {
       console.log("👨‍💻 [App] Loading user modules dynamically...");
       Promise.all([
         import("./roles/user/UserApp.jsx"),
@@ -82,7 +81,6 @@ function App() {
   }, [user]);
 
   if (loading) {
-    console.log("⏳ [App] Still loading authentication state...");
     return (
       <div className="flex items-center justify-center h-screen">
         <p>Checking authentication...</p>
@@ -90,104 +88,46 @@ function App() {
     );
   }
 
-  console.log("👤 [App] Current user:", user);
-  console.log("🧭 [App] is_admin:", user?.is_admin);
-
-
-
   return (
     <div className="font-(family-name:--font-poppins)">
-    <Suspense fallback={<div className="flex items-center justify-center h-screen">Loading...</div>}>
-      <Routes>
-        {/* ======================= AUTH ROUTES ======================= */}
-         <Route path="/" element={<LandingPage user={user} loading={loading} />} />
-        <Route
-          path="/login"
-          element={
-            <Login
-              onLogin={(u) => {
-                console.log("✅ [App] User logged in:", u);
-                setUser(u);
-              }}
-            />
-          }
-        />
-        <Route path="/register" element={<Register />} />
+      <Suspense fallback={<div className="flex items-center justify-center h-screen">Loading...</div>}>
+        <Routes>
+          {/* ======================= AUTH ROUTES ======================= */}
+          <Route path="/" element={<LandingPage user={user} loading={loading} />} />
+          <Route
+            path="/login"
+            element={<Login onLogin={(u) => { setUser(u); }} />}
+          />
+          <Route path="/register" element={<Register />} />
 
-        {/* ======================= ADMIN ROUTES ======================= */}
-        {user && user.is_admin && (
-          <>
-            {!AdminModules ? (
-              <Route
-                path="*"
-                element={
-                  <div className="flex items-center justify-center h-screen">
-                    <p>Loading admin modules...</p>
-                  </div>
-                }
-              />
-            ) : (
-              <Route path="/admin" element={<AdminModules.AdminApp />}>
-                <Route
-                  path="projects"
-                  element={<AdminModules.Project />}
-                />
-                <Route
-                  path="users"
-                  element={<AdminModules.UserManagement />}
-                />
-                <Route 
-                  path="dashboard"
-                  element={<AdminModules.Dashboard />}
-                />
-                <Route 
-                  path="projects/:projectId"
-                  element={<AdminModules.DetailProject />}
-                />
-                <Route path="" element={<Navigate to="dashboard" replace />} />
-              </Route>
-            )}
-          </>
-        )}
+          {/* ======================= ADMIN ROUTES ======================= */}
+          {user?.is_admin && AdminModules && (
+            <Route path="/admin/*" element={<AdminModules.AdminApp />}>
+              <Route path="projects" element={<AdminModules.Project />} />
+              <Route path="users" element={<AdminModules.UserManagement />} />
+              <Route path="dashboard" element={<AdminModules.Dashboard />} />
+              <Route path="projects/:projectId" element={<AdminModules.DetailProject />} />
+              <Route path="" element={<Navigate to="dashboard" replace />} />
+            </Route>
+          )}
 
-        {/* ======================= USER ROUTES ======================= */}
-        {user && !user.is_admin && (
-          <>
-            {!UserModules ? (
-              <Route
-                path="*"
-                element={
-                  <div className="flex items-center justify-center h-screen">
-                    <p>Loading user modules...</p>
-                  </div>
-                }
-              />
-            ) : (
-              <Route path="/user/*" element={<UserModules.UserApp />}>
-                <Route
-                  path="dashboard"
-                  element={<UserModules.HomeDashboard />}
-                />
-                <Route
-                  path="task"
-                  element={<UserModules.Task />}
-                />
-                <Route
-                  path="board/:board_id/*"
-                  element={<UserModules.ProjectRoleRoute />}
-                />
-                <Route path="" element={<Navigate to="dashboard" replace />} />
-              </Route>
-            )}
-          </>
-        )}
+          {/* ======================= USER ROUTES ======================= */}
+          {user && !user.is_admin && UserModules && (
+            <Route path="/user/*" element={<UserModules.UserApp />}>
+              <Route path="dashboard" element={<UserModules.HomeDashboard />} />
+              <Route path="task" element={<UserModules.Task />} />
+              <Route path="board/:board_id/*" element={<UserModules.ProjectRoleRoute />} />
+              <Route path="" element={<Navigate to="dashboard" replace />} />
+            </Route>
+          )}
 
-        {/* ======================= DEFAULT FALLBACK ======================= */}
-        {!user && (
-          <Route path="*" element={<Navigate to="/login" replace />} />
-        )}
-      </Routes>
-    </Suspense>
+          {/* ======================= DEFAULT FALLBACK ======================= */}
+          {!user && !loading && <Route path="*" element={<Navigate to="/login" replace />} />}
+
+          {/* Optional fallback 404 */}
+          <Route path="*" element={<p className="text-center mt-10">Page not found</p>} />
+        </Routes>
+      </Suspense>
     </div>
   );
 }
