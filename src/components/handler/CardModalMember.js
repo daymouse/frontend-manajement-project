@@ -1,8 +1,10 @@
 import { useState, useEffect } from "react";
 import { apiFetch } from "../../Server";
 import { socket } from "../../socket";
+import { useAlert } from "../AlertContext"; 
 
 export default function useCardHandlers(cardId, commentInputRef) {
+  const { showAlert } = useAlert();
   const [card, setCard] = useState(null);
   const [comments, setComments] = useState([]);
   const [commentText, setCommentText] = useState("");
@@ -25,6 +27,13 @@ export default function useCardHandlers(cardId, commentInputRef) {
   const [taggedSubtask, setTaggedSubtask] = useState(null);
   const [showSubtaskSuggestions, setShowSubtaskSuggestions] = useState(false);
   const [subtaskSuggestions, setSubtaskSuggestions] = useState([]);
+
+  // New states for inline editing
+  const [editingField, setEditingField] = useState(null);
+  const [editingValue, setEditingValue] = useState("");
+
+  // New states for time tracking
+  const [activeTimeLogs, setActiveTimeLogs] = useState({});
 
   const openReportModal = (type, id) => {
     setTargetType(type);
@@ -72,16 +81,22 @@ export default function useCardHandlers(cardId, commentInputRef) {
     load();
   }, [cardId]);
 
-  // =====================================================
-  // 🧩 FETCH COMMENTS
-  // =====================================================
+  /* =====================================================
+     🧩 FETCH COMMENTS
+  ===================================================== */
   useEffect(() => {
     if (!cardId) return;
 
     const fetchComments = async () => {
       try {
         const data = await apiFetch(`/comment/card/${cardId}`);
-        setComments(data || []);
+        console.log("📝 Raw comments data:", data);
+        
+        if (Array.isArray(data)) {
+          setComments(data);
+        } else {
+          setComments([]);
+        }
       } catch (err) {
         console.error("❌ Gagal memuat komentar:", err);
         setComments([]);
@@ -90,6 +105,38 @@ export default function useCardHandlers(cardId, commentInputRef) {
 
     fetchComments();
   }, [cardId]);
+
+  /* =====================================================
+     🧩 FETCH ACTIVE TIME LOGS - FIXED VERSION
+  ===================================================== */
+  useEffect(() => {
+    if (!cardId || !currentUser?.user_id) return;
+
+    const fetchActiveTimeLogs = async () => {
+      try {
+        // Gunakan endpoint yang benar atau ambil dari card data
+        // Sementara kita akan ambil dari card detail yang sudah ada
+        if (card?.subtasks) {
+          const activeLogsMap = {};
+          card.subtasks.forEach(subtask => {
+            if (subtask.status === "in_progress" && subtask.assigned_to === currentUser.user_id) {
+              activeLogsMap[subtask.subtask_id] = {
+                subtask_id: subtask.subtask_id,
+                start_time: new Date().toISOString(), // Ini sementara, nanti bisa diambil dari API khusus
+                user_id: currentUser.user_id
+              };
+            }
+          });
+          setActiveTimeLogs(activeLogsMap);
+        }
+      } catch (err) {
+        console.error("❌ Gagal memuat active time logs:", err);
+        // Jangan tampilkan error ke user, karena ini optional
+      }
+    };
+
+    fetchActiveTimeLogs();
+  }, [cardId, currentUser?.user_id, card?.subtasks]);
 
   /* =====================================================
      🧩 FETCH CONTRIBUTORS
@@ -112,7 +159,7 @@ export default function useCardHandlers(cardId, commentInputRef) {
   const isOwner = ownerCard.includes(currentUser?.user_id);
 
   /* =====================================================
-     ⚡ SOCKET.IO INTEGRASI - COMMENT FEATURES
+     ⚡ SOCKET.IO INTEGRASI - FIXED VERSION
   ===================================================== */
   useEffect(() => {
     if (!cardId) return;
@@ -120,12 +167,41 @@ export default function useCardHandlers(cardId, commentInputRef) {
     socket.emit("join_card", cardId);
     socket.emit("join_card_comments", cardId);
 
-    // Existing socket events
-    socket.on("subtask_status_changed", ({ subtask_id, status }) => {
+    // Existing socket events untuk card dan subtask
+    socket.on("subtask_status_changed", ({ subtask_id, status, type, started_at, ended_at }) => {
+      console.log("🔄 [SOCKET] subtask_status_changed:", { subtask_id, status, type });
+      
       setCard((prev) => ({
         ...prev,
         subtasks: prev.subtasks?.map((s) =>
           s.subtask_id === subtask_id ? { ...s, status } : s
+        ),
+      }));
+
+      // Update active time logs berdasarkan type
+      if (type === "start") {
+        setActiveTimeLogs(prev => ({
+          ...prev,
+          [subtask_id]: {
+            subtask_id,
+            start_time: started_at,
+            user_id: currentUser?.user_id
+          }
+        }));
+      } else if (type === "end") {
+        setActiveTimeLogs(prev => {
+          const newLogs = { ...prev };
+          delete newLogs[subtask_id];
+          return newLogs;
+        });
+      }
+    });
+
+    socket.on("subtask_updated", (updatedSubtask) => {
+      setCard((prev) => ({
+        ...prev,
+        subtasks: prev.subtasks?.map((s) =>
+          s.subtask_id === updatedSubtask.subtask_id ? updatedSubtask : s
         ),
       }));
     });
@@ -154,36 +230,70 @@ export default function useCardHandlers(cardId, commentInputRef) {
       });
     });
 
-    // Blocker events
+    socket.on("subtask_deleted", ({ subtask_id }) => {
+      setCard((prev) => ({
+        ...prev,
+        subtasks: prev.subtasks?.filter((s) => s.subtask_id !== subtask_id),
+      }));
+      
+      // Hapus dari active time logs juga
+      setActiveTimeLogs(prev => {
+        const newLogs = { ...prev };
+        delete newLogs[subtask_id];
+        return newLogs;
+      });
+    });
+
+    // Blocker events - FIXED: hanya handle untuk card ini
     socket.on("blocker_reported", (blocker) => {
       console.log("🚨 [SOCKET] Blocker dilaporkan:", blocker);
+      if (blocker.card_id !== cardId) return;
+      
       setCard((prev) => {
-        if (!prev?.subtasks) return prev;
-        if (blocker.type === "subtask") {
-          const updated = prev.subtasks.map((s) => {
+        if (!prev) return prev;
+        
+        // Update card blockers
+        if (blocker.type === "card") {
+          const updatedBlockers = [...(prev.card_blockers || []), blocker];
+          return { ...prev, card_blockers: updatedBlockers };
+        }
+        
+        // Update subtask blockers
+        if (blocker.type === "subtask" && prev.subtasks) {
+          const updatedSubtasks = prev.subtasks.map((s) => {
             if (s.subtask_id === blocker.subtask_id) {
-              const blockers = [...(s.subtask_blockers || []), {
-                blocker_id: blocker.blocker_id,
-                blocker_reason: blocker.blocker_reason,
-                is_resolved: false,
-                created_at: blocker.created_at,
-              }];
+              const blockers = [...(s.subtask_blockers || []), blocker];
               return { ...s, subtask_blockers: blockers };
             }
             return s;
           });
-          return { ...prev, subtasks: updated };
+          return { ...prev, subtasks: updatedSubtasks };
         }
+        
         return prev;
       });
     });
 
     socket.on("blocker_solved", (blocker) => {
       console.log("✅ [SOCKET] Blocker diselesaikan:", blocker);
+      if (blocker.card_id !== cardId) return;
+      
       setCard((prev) => {
-        if (!prev?.subtasks) return prev;
-        if (blocker.type === "subtask") {
-          const updated = prev.subtasks.map((s) => {
+        if (!prev) return prev;
+        
+        // Update card blockers
+        if (blocker.type === "card") {
+          const updatedBlockers = (prev.card_blockers || []).map((b) =>
+            b.blocker_id === blocker.blocker_id
+              ? { ...b, is_resolved: true, solution: blocker.solution }
+              : b
+          );
+          return { ...prev, card_blockers: updatedBlockers };
+        }
+        
+        // Update subtask blockers
+        if (blocker.type === "subtask" && prev.subtasks) {
+          const updatedSubtasks = prev.subtasks.map((s) => {
             if (s.subtask_id === blocker.subtask_id) {
               const blockers = (s.subtask_blockers || []).map((b) =>
                 b.blocker_id === blocker.blocker_id
@@ -194,55 +304,135 @@ export default function useCardHandlers(cardId, commentInputRef) {
             }
             return s;
           });
-          return { ...prev, subtasks: updated };
+          return { ...prev, subtasks: updatedSubtasks };
         }
+        
         return prev;
       });
     });
 
-    // Comment events
-    socket.on("comment:new", (newComment) => {
-      setComments((prev) => [...prev, newComment]);
-      
-      // Notify user if they are mentioned in a subtask
-      if (newComment.tagged_subtask_id && 
-          card?.subtasks?.find(s => s.subtask_id === newComment.tagged_subtask_id)?.assigned_to === currentUser?.user_id) {
-        alert(`💬 Anda disebutkan dalam komentar untuk subtask: ${newComment.tagged_subtask?.subtask_title}`);
+    // Card status events - FIXED: hanya untuk card ini
+    socket.on("card_status_inProgres", (data) => {
+      if (data.card_id === cardId) {
+        setCard(prev => ({
+          ...prev,
+          status: "in_progress"
+        }));
       }
     });
 
-    socket.on("comment:updated", (updated) => {
-      setComments((prev) =>
-        prev.map((c) => (c.comment_id === updated.comment_id ? updated : c))
+    socket.on("card_status_review", (data) => {
+      if (data.card_id === cardId) {
+        setCard(prev => ({
+          ...prev,
+          status: "review"
+        }));
+      }
+    });
+
+    socket.on("card_status_done", (data) => {
+      if (data.card_id === cardId) {
+        setCard(prev => ({
+          ...prev,
+          status: "done"
+        }));
+      }
+    });
+
+    socket.on("card_status_revisi", (data) => {
+      if (data.card_id === cardId) {
+        setCard(prev => ({
+          ...prev,
+          status: "in_progress"
+        }));
+      }
+    });
+
+    // Comment events
+    socket.on("comment:new", (newComment) => {
+      console.log("📨 [SOCKET] comment:new received:", newComment);
+      if (newComment.card_id !== cardId) return;
+      
+      setComments(prev => {
+        if (prev.find(c => c.comment_id === newComment.comment_id)) {
+          return prev;
+        }
+        return [...prev, newComment];
+      });
+    });
+
+    socket.on("comment:updated", (updatedComment) => {
+      console.log("✏️ [SOCKET] comment:updated received:", updatedComment);
+      if (updatedComment.card_id !== cardId) return;
+      
+      setComments(prev =>
+        prev.map((comment) => 
+          comment.comment_id === updatedComment.comment_id ? updatedComment : comment
+        )
       );
     });
 
-    socket.on("comment:deleted", ({ comment_id }) => {
-      setComments((prev) => prev.filter((c) => c.comment_id !== comment_id));
+    socket.on("comment:deleted", (deletedData) => {
+      console.log("🗑️ [SOCKET] comment:deleted received:", deletedData);
+      const { comment_id, card_id } = deletedData;
+      
+      if (card_id === cardId) {
+        setComments(prev => 
+          prev.filter((c) => c.comment_id !== comment_id)
+        );
+      }
+    });
+
+    socket.on("comment_deleted", (deletedData) => {
+      console.log("🗑️ [SOCKET] comment_deleted received:", deletedData);
+      const { comment_id, card_id } = deletedData;
+      
+      if (card_id === cardId) {
+        setComments(prev => 
+          prev.filter((c) => c.comment_id !== comment_id)
+        );
+      }
     });
 
     socket.on("comment:reject", (rejectComment) => {
-      setComments((prev) => [...prev, rejectComment]);
+      console.log("❌ [SOCKET] comment:reject received:", rejectComment);
+      if (rejectComment.card_id !== cardId) return;
+      
+      setComments((prev) => {
+        if (prev.find(c => c.comment_id === rejectComment.comment_id)) {
+          return prev;
+        }
+        return [...prev, rejectComment];
+      });
+      
       setActiveTab("comments");
       if (rejectComment.subtask_id) {
         setSelectedSubtaskId(rejectComment.subtask_id);
       }
-      alert(`❌ Subtask #${rejectComment.subtask_id} ditolak: buka tab komentar untuk alasan.`);
+    });
+
+    // Event untuk typing indicator
+    socket.on("comment_typing", ({ user_id, user_name, card_id, is_typing }) => {
+      if (card_id === cardId && user_id !== currentUser?.user_id) {
+        console.log(`👤 ${user_name} is ${is_typing ? 'typing' : 'not typing'}`);
+      }
     });
 
     return () => {
       socket.emit("leave_card", cardId);
       socket.emit("leave_card_comments", cardId);
-      socket.off("subtask_status_changed");
-      socket.off("subtask_added");
-      socket.off("subtask_assigned");
-      socket.off("blocker_reported");
-      socket.off("blocker_solved");
-      socket.off("comment:new");
-      socket.off("comment:updated");
-      socket.off("comment:deleted");
-      socket.off("comment_typing");
-      socket.off("comment:reject");
+      
+      // Cleanup event listeners
+      const events = [
+        "subtask_status_changed", "subtask_updated", "subtask_added",
+        "subtask_assigned", "subtask_deleted", "blocker_reported", 
+        "blocker_solved", "comment:new", "comment:updated", 
+        "comment:deleted", "comment_deleted", "comment_typing", 
+        "comment:reject", "card_status_inProgres", "card_status_review",
+        "card_status_done", "card_status_revisi"
+      ];
+      
+      events.forEach(event => socket.off(event));
     };
   }, [cardId, card?.subtasks, currentUser?.user_id]);
 
@@ -271,10 +461,12 @@ export default function useCardHandlers(cardId, commentInputRef) {
   }, [commentText, card?.subtasks]);
 
   /* =====================================================
-   💬 COMMENT HANDLERS - ENHANCED
+   💬 COMMENT HANDLERS
   ===================================================== */
 
   const handleTagSubtask = (subtask) => {
+    if (!subtask) return;
+    
     const lastHashIndex = commentText.lastIndexOf('#');
     const beforeHash = commentText.slice(0, lastHashIndex);
     const newCommentText = `${beforeHash}#${subtask.subtask_title} `;
@@ -289,15 +481,24 @@ export default function useCardHandlers(cardId, commentInputRef) {
   };
 
   const handleReplyComment = (commentId, userName) => {
-    setReplyingTo({ commentId, userName });
+    if (!commentId || !userName) return;
+    
+    setReplyingTo({ 
+      commentId, 
+      userName 
+    });
     setCommentText(`@${userName} `);
+    
     if (commentInputRef.current) {
       commentInputRef.current.focus();
     }
   };
 
+  /* =====================================================
+     ➕ HANDLE ADD COMMENT
+  ===================================================== */
   const handleAddComment = async () => {
-    if (!commentText.trim()) return;
+    if (!commentText.trim() || !cardId) return;
     
     try {
       const commentData = {
@@ -307,6 +508,13 @@ export default function useCardHandlers(cardId, commentInputRef) {
         parent_comment_id: replyingTo?.commentId || null,
         tagged_subtask_id: taggedSubtask?.subtask_id || null
       };
+
+      // Emit typing stop
+      socket.emit("comment_typing", {
+        card_id: cardId,
+        user_id: currentUser?.user_id,
+        is_typing: false
+      });
 
       await apiFetch("/comment", {
         method: "POST",
@@ -321,11 +529,13 @@ export default function useCardHandlers(cardId, commentInputRef) {
       
     } catch (err) {
       console.error("❌ Gagal menambahkan komentar:", err);
-      alert("Gagal menambahkan komentar.");
+      showAlert("Gagal menambahkan komentar.");
     }
   };
 
   const handleEditComment = async (comment_id, newText) => {
+    if (!comment_id || !newText) return;
+    
     try {
       await apiFetch(`/comment/${comment_id}`, {
         method: "PUT",
@@ -333,39 +543,218 @@ export default function useCardHandlers(cardId, commentInputRef) {
       });
     } catch (err) {
       console.error("❌ Gagal mengubah komentar:", err);
-    }
-  };
-
-  const handleDeleteComment = async (comment_id) => {
-    if (!confirm("Hapus komentar ini?")) return;
-    try {
-      await apiFetch(`/comment/${comment_id}`, { method: "DELETE" });
-    } catch (err) {
-      console.error("❌ Gagal menghapus komentar:", err);
+      showAlert("Gagal mengubah komentar.");
     }
   };
 
   /* =====================================================
-     🧩 EXISTING HANDLERS (tetap sama)
+     🗑️ HANDLE DELETE COMMENT
   ===================================================== */
-
-  const handleAddSubtask = async (formData) => {
+  const handleDeleteComment = async (comment_id) => {
+    if (!comment_id || !confirm("Hapus komentar ini?")) return;
+    
     try {
-      await apiFetch(`/subtask/cards/${cardId}/subtasks`, {
-        method: "POST",
-        body: JSON.stringify(formData),
+      // Optimistic update
+      const deletedComment = comments.find(c => c.comment_id === comment_id);
+      setComments(prev => prev.filter((c) => c.comment_id !== comment_id));
+      
+      await apiFetch(`/comment/${comment_id}`, { method: "DELETE" });
+      
+      // Emit socket event hanya ke card room
+      socket.emit("comment:deleted", { 
+        comment_id, 
+        card_id: cardId 
       });
-      setShowForm(false);
+      
+      showAlert("🗑️ Komentar berhasil dihapus!");
+      
     } catch (err) {
-      console.error("❌ Gagal menambah subtask:", err);
-      alert(err.message || "Gagal menambah subtask");
+      console.error("❌ Gagal menghapus komentar:", err);
+      
+      // Rollback optimistic update
+      if (deletedComment) {
+        setComments(prev => {
+          const updated = [...prev, deletedComment];
+          return updated.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+        });
+      }
+      
+      showAlert("Terjadi error saat menghapus komentar.");
     }
   };
 
+  /* =====================================================
+     ✏️ INLINE UPDATE HANDLER
+  ===================================================== */
+  const handleInlineUpdate = async (subtaskId, field, value) => {
+    if (!subtaskId || !field) {
+      console.error("❌ Missing subtaskId or field for inline update");
+      return;
+    }
+
+    setProcessingId(subtaskId);
+    
+    try {
+      const response = await apiFetch(`/subtask/update/${subtaskId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ [field]: value }),
+      });
+
+      // Update local state immediately for better UX
+      setCard((prev) => ({
+        ...prev,
+        subtasks: prev.subtasks?.map((s) =>
+          s.subtask_id === subtaskId ? { ...s, [field]: value } : s
+        ),
+      }));
+
+      // Emit socket event untuk update real-time - HANYA ke card room
+      socket.emit("subtask_updated", {
+        subtask_id: subtaskId,
+        [field]: value,
+        updated_at: new Date().toISOString(),
+        card_id: cardId
+      });
+
+      showAlert(`✅ ${field === 'subtask_title' ? 'Judul' : 'Deskripsi'} subtask berhasil diperbarui!`);
+      
+    } catch (err) {
+      console.error("❌ Gagal update subtask:", err);
+      showAlert(`Gagal memperbarui ${field === 'subtask_title' ? 'judul' : 'deskripsi'} subtask.`);
+    } finally {
+      setProcessingId(null);
+      setEditingField(null);
+      setEditingValue("");
+    }
+  };
+
+  /* =====================================================
+     🗑️ DELETE SUBTASK HANDLER
+  ===================================================== */
+  const handleDeleteSubtask = async (subtaskId) => {
+    if (!subtaskId || !confirm("Yakin ingin menghapus subtask ini? Tindakan ini tidak dapat dibatalkan.")) return;
+
+    setProcessingId(subtaskId);
+    
+    try {
+      await apiFetch(`/subtask/delete/${subtaskId}`, {
+        method: "DELETE",
+      });
+
+      // Update local state immediately
+      setCard((prev) => ({
+        ...prev,
+        subtasks: prev.subtasks?.filter((s) => s.subtask_id !== subtaskId),
+      }));
+
+      // Emit socket event untuk delete real-time - HANYA ke card room
+      socket.emit("subtask_deleted", { 
+        subtask_id: subtaskId,
+        card_id: cardId
+      });
+
+      showAlert("✅ Subtask berhasil dihapus!");
+
+    } catch (err) {
+      console.error("❌ Gagal menghapus subtask:", err);
+      showAlert("Gagal menghapus subtask. Silakan coba lagi.");
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  /* =====================================================
+     🧩 START EDITING HANDLER (untuk inline editing)
+  ===================================================== */
+  const startEditing = (subtaskId, field, currentValue) => {
+    setEditingField(`${subtaskId}-${field}`);
+    setEditingValue(currentValue || "");
+  };
+
+  const cancelEditing = () => {
+    setEditingField(null);
+    setEditingValue("");
+  };
+
+  const saveEditing = (subtaskId, field) => {
+    if (!editingValue.trim()) {
+      showAlert(`${field === 'subtask_title' ? 'Judul' : 'Deskripsi'} tidak boleh kosong!`);
+      return;
+    }
+    handleInlineUpdate(subtaskId, field, editingValue.trim());
+  };
+
+  /* =====================================================
+     🧩 ORGANIZE COMMENTS FUNCTION
+  ===================================================== */
+  const organizeComments = (commentsArray) => {
+    if (!commentsArray || !Array.isArray(commentsArray)) return [];
+    
+    try {
+      const commentMap = new Map();
+      const rootComments = [];
+      
+      // First pass: map semua komentar
+      commentsArray.forEach(comment => {
+        if (comment && comment.comment_id) {
+          commentMap.set(comment.comment_id, {
+            ...comment,
+            replies: []
+          });
+        }
+      });
+      
+      // Second pass: organize parent-child relationship
+      commentsArray.forEach(comment => {
+        if (!comment || !comment.comment_id) return;
+        
+        const commentObj = commentMap.get(comment.comment_id);
+        if (!commentObj) return;
+        
+        if (comment.parent_comment_id) {
+          // Ini adalah reply, tambahkan ke parent
+          const parent = commentMap.get(comment.parent_comment_id);
+          if (parent) {
+            parent.replies.push(commentObj);
+          }
+        } else {
+          // Ini adalah root comment
+          rootComments.push(commentObj);
+        }
+      });
+      
+      // Sort by date
+      return rootComments.sort((a, b) => 
+        new Date(a.created_at) - new Date(b.created_at)
+      );
+    } catch (error) {
+      console.error("Error organizing comments:", error);
+      return commentsArray || [];
+    }
+  };
+
+  // Get organized comments for export
+  const organizedComments = organizeComments(comments);
+
+  /* =====================================================
+     ⏱️ TIME TRACKING HANDLERS
+  ===================================================== */
   const handleStartWork = async (subtaskId) => {
     const subtask = card?.subtasks?.find((s) => s.subtask_id === subtaskId);
-    if (!subtask || subtask.assigned_to !== currentUser?.user_id) {
-      alert("Anda bukan assignee subtask ini!");
+    if (!subtask) {
+      showAlert("Subtask tidak ditemukan!");
+      return;
+    }
+
+    // Cek apakah user adalah assignee
+    if (subtask.assigned_to !== currentUser?.user_id) {
+      showAlert("Anda bukan assignee subtask ini!");
+      return;
+    }
+
+    // Cek apakah sudah ada active time log untuk subtask ini
+    if (activeTimeLogs[subtaskId]) {
+      showAlert("Anda sudah memulai pekerjaan pada subtask ini!");
       return;
     }
 
@@ -379,18 +768,86 @@ export default function useCardHandlers(cardId, commentInputRef) {
           description: "Mulai mengerjakan subtask",
         }),
       });
-      setCard((p) => ({
-        ...p,
-        subtasks: p.subtasks.map((s) =>
+
+      // Update local state immediately
+      setCard((prev) => ({
+        ...prev,
+        subtasks: prev.subtasks.map((s) =>
           s.subtask_id === subtaskId ? { ...s, status: "in_progress" } : s
         ),
       }));
-      alert("⏱ Log waktu mulai disimpan!");
+
+      showAlert("⏱ Log waktu mulai disimpan!");
     } catch (err) {
       console.error("❌ Gagal memulai subtask:", err);
-      alert(err.message || "Gagal memulai subtask.");
+      showAlert(err.message || "Gagal memulai subtask.");
     } finally {
       setProcessingId(null);
+    }
+  };
+
+  const handleFinishWork = async (subtaskId) => {
+    const subtask = card?.subtasks?.find((s) => s.subtask_id === subtaskId);
+    if (!subtask) {
+      showAlert("Subtask tidak ditemukan!");
+      return;
+    }
+
+    if (subtask.assigned_to !== currentUser?.user_id) {
+      showAlert("Anda bukan assignee subtask ini!");
+      return;
+    }
+
+    setProcessingId(subtaskId);
+    try {
+      await apiFetch(`/time/time-logs/end`, {
+        method: "PUT",
+        body: JSON.stringify({
+          subtask_id: subtaskId,
+          description: "Menyelesaikan subtask",
+        }),
+      });
+
+      // Update local state immediately
+      setCard((prev) => ({
+        ...prev,
+        subtasks: prev.subtasks.map((s) =>
+          s.subtask_id === subtaskId ? { ...s, status: "review" } : s
+        ),
+      }));
+
+      showAlert("📤 Subtask dikirim untuk review!");
+    } catch (err) {
+      console.error("❌ Gagal menyelesaikan subtask:", err);
+      showAlert(err.message || "Gagal menyelesaikan subtask.");
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  /* =====================================================
+     🧩 EXISTING HANDLERS - UPDATED
+  ===================================================== */
+  const handleAddSubtask = async (formData) => {
+    try {
+      const response = await apiFetch(`/subtask/cards/${cardId}/subtasks`, {
+        method: "POST",
+        body: JSON.stringify(formData),
+      });
+
+      // Emit socket event untuk real-time update - HANYA ke card room
+      if (response) {
+        socket.emit("subtask_added", {
+          ...response,
+          card_id: cardId
+        });
+      }
+
+      setShowForm(false);
+      showAlert("✅ Subtask berhasil ditambahkan!");
+    } catch (err) {
+      console.error("❌ Gagal menambah subtask:", err);
+      showAlert(err.message || "Gagal menambah subtask");
     }
   };
 
@@ -405,57 +862,20 @@ export default function useCardHandlers(cardId, commentInputRef) {
         }),
       });
       setEditingSubtaskId(null);
+      showAlert("✅ Assignee berhasil diubah!");
     } catch (err) {
       console.error("❌ Gagal mengubah assignee:", err);
-      alert(err.message || "Gagal mengubah penugasan subtask.");
-    }
-  };
-
-  const handleFinishWork = async (subtaskId) => {
-    const subtask = card?.subtasks?.find((s) => s.subtask_id === subtaskId);
-    if (!subtask || subtask.assigned_to !== currentUser?.user_id) {
-      alert("Anda bukan assignee subtask ini!");
-      return;
-    }
-
-    setProcessingId(subtaskId);
-    try {
-      await apiFetch(`/time/time-logs/end`, {
-        method: "PUT",
-        body: JSON.stringify({
-          card_id: cardId,
-          subtask_id: subtaskId,
-          description: "Menyelesaikan subtask",
-        }),
-      });
-      setCard((p) => ({
-        ...p,
-        subtasks: p.subtasks.map((s) =>
-          s.subtask_id === subtaskId ? { ...s, status: "review" } : s
-        ),
-      }));
-      alert("📤 Subtask dikirim untuk review!");
-    } catch (err) {
-      console.error("❌ Gagal menyelesaikan subtask:", err);
-      alert(err.message || "Gagal menyelesaikan subtask.");
-    } finally {
-      setProcessingId(null);
+      showAlert(err.message || "Gagal mengubah penugasan subtask.");
     }
   };
 
   const handleReviewSubtask = async (subtaskId, action) => {
     if (!isOwner) {
-      alert("Hanya Task Owner yang bisa melakukan review!");
+      showAlert("Hanya Task Owner yang bisa melakukan review!");
       return;
     }
 
-    if (
-      !confirm(
-        `Yakin ingin ${
-          action === "approved" ? "menyetujui" : "menolak"
-        } subtask ini?`
-      )
-    )
+    if (!confirm(`Yakin ingin ${action === "approved" ? "menyetujui" : "menolak"} subtask ini?`))
       return;
 
     setProcessingId(subtaskId);
@@ -468,22 +888,23 @@ export default function useCardHandlers(cardId, commentInputRef) {
         }),
       });
 
-      setCard((p) => ({
-        ...p,
-        subtasks: p.subtasks.map((s) =>
+      setCard((prev) => ({
+        ...prev,
+        subtasks: prev.subtasks.map((s) =>
           s.subtask_id === subtaskId
             ? { ...s, status: action === "approved" ? "done" : "in_progress" }
             : s
         ),
       }));
-      alert(
+
+      showAlert(
         action === "approved"
           ? "✅ Subtask disetujui!"
           : "❌ Subtask ditolak!"
       );
     } catch (err) {
       console.error("❌ Gagal review subtask:", err);
-      alert(err.message || "Gagal mereview subtask.");
+      showAlert(err.message || "Gagal mereview subtask.");
     } finally {
       setProcessingId(null);
     }
@@ -492,7 +913,6 @@ export default function useCardHandlers(cardId, commentInputRef) {
   /* =====================================================
      🧱 BLOCKER HANDLERS
   ===================================================== */
-
   const handleReportBlocker = async ({ type, id, reason, board_id }) => {
     try {
       const res = await apiFetch(`/blocker/report`, {
@@ -505,11 +925,11 @@ export default function useCardHandlers(cardId, commentInputRef) {
           card_id: cardId,
         }),
       });
-      alert("🚨 Blocker berhasil dilaporkan!");
-      console.log("📡 Blocker reported:", res.data);
+      showAlert("🚨 Blocker berhasil dilaporkan!");
+      setShowReportModal(false);
     } catch (err) {
       console.error("❌ Gagal melaporkan blocker:", err);
-      alert(err.message || "Gagal melaporkan blocker.");
+      showAlert(err.message || "Gagal melaporkan blocker.");
     }
   };
 
@@ -525,15 +945,41 @@ export default function useCardHandlers(cardId, commentInputRef) {
           card_id: cardId,
         }),
       });
-      alert("✅ Blocker berhasil diselesaikan!");
-      console.log("📡 Blocker solved:", res.data);
+      showAlert("✅ Blocker berhasil diselesaikan!");
+      setShowSolveModal(false);
     } catch (err) {
       console.error("❌ Gagal menyelesaikan blocker:", err);
-      alert(err.message || "Gagal menyelesaikan blocker.");
+      showAlert(err.message || "Gagal menyelesaikan blocker.");
+    }
+  };
+
+  /* =====================================================
+     ⌨️ TYPING INDICATOR HANDLERS
+  ===================================================== */
+  const handleCommentTypingStart = () => {
+    if (cardId && currentUser?.user_id) {
+      socket.emit("comment_typing", {
+        card_id: cardId,
+        user_id: currentUser.user_id,
+        user_name: currentUser.user_name,
+        is_typing: true
+      });
+    }
+  };
+
+  const handleCommentTypingStop = () => {
+    if (cardId && currentUser?.user_id) {
+      socket.emit("comment_typing", {
+        card_id: cardId,
+        user_id: currentUser.user_id,
+        user_name: currentUser.user_name,
+        is_typing: false
+      });
     }
   };
 
   return {
+    // State
     card,
     loading,
     showForm,
@@ -547,15 +993,26 @@ export default function useCardHandlers(cardId, commentInputRef) {
     setActiveTab,
     isOwner,
     ownerCard,
-    handleAddSubtask,
-    handleStartWork,
-    handleAssignSubtask,
-    handleFinishWork,
-    handleReviewSubtask,
-    handleReportBlocker,
-    handleSolveBlocker,
-    openSolveModal,
-    openReportModal,
+    comments: organizedComments,
+    setComments,
+    commentText,
+    setCommentText,
+    replyingTo,
+    setReplyingTo,
+    taggedSubtask,
+    setTaggedSubtask,
+    showSubtaskSuggestions,
+    setShowSubtaskSuggestions,
+    subtaskSuggestions,
+    selectedSubtaskId,
+    setSelectedSubtaskId,
+    editingField,
+    setEditingField,
+    editingValue,
+    setEditingValue,
+    activeTimeLogs,
+    
+    // Modal handlers
     showReportModal,
     setShowReportModal,
     showSolveModal,
@@ -564,24 +1021,35 @@ export default function useCardHandlers(cardId, commentInputRef) {
     targetId,
     solveBlockerId,
     setSolveBlockerId,
-    comments,
-    setComments,
-    commentText,
-    setCommentText,
+    openReportModal,
+    openSolveModal,
+    
+    // Comment handlers
     handleAddComment,
     handleEditComment,
     handleDeleteComment,
-    // New comment features
-    replyingTo,
-    setReplyingTo,
-    taggedSubtask,
-    setTaggedSubtask,
-    showSubtaskSuggestions,
-    setShowSubtaskSuggestions,
-    subtaskSuggestions,
     handleTagSubtask,
     handleReplyComment,
-    selectedSubtaskId,
-    setSelectedSubtaskId,
+    organizeComments,
+    
+    // Subtask handlers
+    handleAddSubtask,
+    handleStartWork,
+    handleAssignSubtask,
+    handleFinishWork,
+    handleReviewSubtask,
+    handleInlineUpdate,
+    handleDeleteSubtask,
+    startEditing,
+    cancelEditing,
+    saveEditing,
+    
+    // Blocker handlers
+    handleReportBlocker,
+    handleSolveBlocker,
+    
+    // Typing handlers
+    handleCommentTypingStart,
+    handleCommentTypingStop,
   };
 }

@@ -1,71 +1,120 @@
 import { useEffect, useState } from "react";
-import { Bell, ChevronDown } from "lucide-react";
+import { Bell, ChevronDown, Menu } from "lucide-react";
+import { apiFetch } from "./../Server";
+import ProfileModal from "./ProfileModal";
 
-const Navbar = () => {
+const Navbar = ({ onMenuClick }) => {
   const [currentTime, setCurrentTime] = useState("");
+  const [currentUser, setCurrentUser] = useState(null);
+  const [showProfileModal, setShowProfileModal] = useState(false);
 
-  // Fetch waktu dari API
+  const handleUpdateUser = (field, value) => {
+    setCurrentUser(prev => ({ 
+      ...prev, 
+      [field]: value 
+    }));
+  };
+
+  const toggleProfileModal = () => {
+    setShowProfileModal(!showProfileModal);
+  };
+
   useEffect(() => {
-    const fetchTime = async () => {
+    const updateTime = () => {
+      const now = new Date();
+      setCurrentTime(
+        now.toLocaleTimeString("id-ID", {
+          hour12: false,
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      );
+    };
+
+    const fetchUser = async () => {
       try {
-        const data = await res.json();
-        if (data.datetime) {
-          const date = new Date(data.datetime);
-          setCurrentTime(date.toLocaleTimeString("id-ID", { hour12: false }));
-        }
-      } catch (error) {
-        console.error("Gagal fetch waktu:", error);
+        const me = await apiFetch("/auth/auth/me");
+        setCurrentUser(me);
+      } catch (err) {
+        console.error("❌ Gagal memuat user login:", err);
       }
     };
 
-    // ambil pertama kali
-    fetchTime();
+    updateTime();
+    fetchUser();
 
-    // update setiap detik
-    const interval = setInterval(() => {
-      setCurrentTime((prev) => {
-        const now = new Date();
-        return now.toLocaleTimeString("id-ID", { hour12: false });
-      });
-    }, 1000);
-
+    const interval = setInterval(updateTime, 1000);
     return () => clearInterval(interval);
   }, []);
 
   return (
     <div className="w-full h-16 bg-white flex items-center justify-between px-6 shadow-sm font-poppins mb-8 rounded-4xl">
-      {/* Left */}
-      <div>
+      {/* Left - Hamburger Menu */}
+      <div className="md:hidden">
+        <button
+          onClick={onMenuClick}
+          className="p-2 rounded-lg text-gray-600 hover:bg-gray-100"
+        >
+          <Menu size={20} />
+        </button>
+      </div>
+
+      {/* Title */}
+      <div className="hidden md:block">
         <span className="font-poppins font-semibold">Project</span>
       </div>
 
-      {/* Center */}
-      <div>
-        <span className="font-poppins font-semibold">{currentTime}</span>
+      {/* Time - Tampilkan di mobile */}
+      <div className="md:hidden">
+        <span className="font-poppins font-semibold text-sm"></span>
       </div>
 
       {/* Right */}
       <div className="flex items-center gap-6">
-        {/* Notification */}
-        <button className="relative">
-          <Bell size={20} className="text-gray-600 hover:text-purple-600" />
-          <span className="absolute -top-1 -right-1 h-2 w-2 bg-red-500 rounded-full"></span>
-        </button>
 
-        {/* User Profile */}
-        <div className="flex items-center gap-3 cursor-pointer">
-          <img
-            src="https://i.pravatar.cc/40"
-            alt="profile"
-            className="w-9 h-9 rounded-full border"
-          />
+        {/* Profile Desktop */}
+        <div
+          className="hidden md:flex items-center gap-3 cursor-pointer"
+          onClick={toggleProfileModal}
+        >
+          <div className="w-9 h-9 rounded-full bg-purple-600 text-white flex items-center justify-center font-semibold border">
+            {currentUser?.full_name
+              ? currentUser.full_name.charAt(0).toUpperCase()
+              : "?"}
+          </div>
           <div className="text-sm text-right">
-            <p className="font-medium text-gray-800">Nicklas Larsen</p>
-            <p className="text-gray-500 text-xs">Admin</p>
+            <p className="font-medium text-gray-800">
+              {currentUser?.full_name || "Loading..."}
+            </p>
+            <p className="text-gray-500 text-xs">
+              {currentUser?.is_admin ? "Admin" : "User"}
+            </p>
           </div>
           <ChevronDown size={16} className="text-gray-500" />
         </div>
+
+        {/* Profile Mobile - Avatar saja */}
+        <div
+          className="md:hidden flex items-center cursor-pointer"
+          onClick={toggleProfileModal}
+        >
+          <div className="w-8 h-8 rounded-full bg-purple-600 text-white flex items-center justify-center font-semibold border text-sm">
+            {currentUser?.full_name
+              ? currentUser.full_name.charAt(0).toUpperCase()
+              : "?"}
+          </div>
+        </div>
       </div>
+
+      {/* Modal */}
+      {showProfileModal && (
+        <ProfileModal
+          user={currentUser}
+          open={showProfileModal}
+          onClose={toggleProfileModal}
+          onUpdateUser={handleUpdateUser}
+        />
+      )}
     </div>
   );
 };

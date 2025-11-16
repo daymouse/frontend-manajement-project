@@ -2,6 +2,7 @@ import { useState, useEffect, lazy, Suspense } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import Login from "./auth/Login";
 import Register from "./auth/Register";
+import LandingPage from "./LandingPage";
 
 function App() {
   const [user, setUser] = useState(null);
@@ -92,10 +93,14 @@ function App() {
   console.log("👤 [App] Current user:", user);
   console.log("🧭 [App] is_admin:", user?.is_admin);
 
+
+
   return (
-    <Suspense fallback={<div>Loading Page...</div>}>
+    <div className="font-(family-name:--font-poppins)">
+    <Suspense fallback={<div className="flex items-center justify-center h-screen">Loading...</div>}>
       <Routes>
         {/* ======================= AUTH ROUTES ======================= */}
+         <Route path="/" element={<LandingPage user={user} loading={loading} />} />
         <Route
           path="/login"
           element={
@@ -183,6 +188,7 @@ function App() {
         )}
       </Routes>
     </Suspense>
+    </div>
   );
 }
 

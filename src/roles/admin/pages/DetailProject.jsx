@@ -24,7 +24,10 @@ import {
   ListTodo,
   Users,
   Target,
-  FileSpreadsheet
+  FileSpreadsheet,
+  ThumbsUp,
+  ThumbsDown,
+  AlertCircle
 } from "lucide-react";
 
 export default function ProjectDetail() {
@@ -48,7 +51,10 @@ export default function ProjectDetail() {
     exportToPDF,
     fetchAllUsers,
     removeMember,
-    users, 
+    users,
+    approveProject,
+    rejectProject,
+    currentUser,
   } = useProjectDetailHandler(projectId);
 
   const [editingField, setEditingField] = useState(null);
@@ -69,22 +75,16 @@ export default function ProjectDetail() {
     pdf: false,
     htmlPdf: false
   });
+  
+  // 🔹 State untuk approve/reject
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+  const [processingAction, setProcessingAction] = useState(false);
 
-  // 🔹 Memoized utility functions
-  const formatDateForInput = useCallback((dateString) => {
-    if (!dateString) return "";
-    return new Date(dateString).toISOString().split('T')[0];
-  }, []);
-
-  const formatDateForDisplay = useCallback((dateString) => {
-    if (!dateString) return "Belum ditentukan";
-    return new Date(dateString).toLocaleDateString("id-ID", {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
-  }, []);
+  // 🔹 Check if project is in review status - SEDERHANAKAN
+  const canApproveReject = useMemo(() => {
+    return project?.status === "review";
+  }, [project]);
 
   // 🔹 Memoized filtered users
   const filteredUsers = useMemo(() => 
@@ -129,6 +129,57 @@ export default function ProjectDetail() {
     setSelectedUser(user);
   }, []);
 
+  // 🔹 Approve/Reject handlers - SEDERHANAKAN
+  const handleApproveProject = useCallback(async () => {
+    console.log("🟢 APPROVE button clicked");
+    
+    setProcessingAction(true);
+    try {
+      await approveProject(projectId, currentUser?.user_id);
+      toast.success("Project berhasil disetujui!");
+      setTimeout(() => refresh(), 500);
+    } catch (err) {
+      console.error("Approve error:", err);
+      toast.error(err.message || "Gagal menyetujui project");
+    } finally {
+      setProcessingAction(false);
+    }
+  }, [projectId, currentUser, approveProject, refresh]);
+
+  const handleRejectProject = useCallback(async () => {
+    console.log("🔴 REJECT button clicked");
+    
+    if (!rejectReason.trim()) {
+      toast.error("Harap berikan alasan penolakan");
+      return;
+    }
+
+    setProcessingAction(true);
+    try {
+      await rejectProject(projectId, currentUser?.user_id, rejectReason);
+      toast.success("Project berhasil ditolak!");
+      setShowRejectModal(false);
+      setRejectReason("");
+      setTimeout(() => refresh(), 500);
+    } catch (err) {
+      console.error("Reject error:", err);
+      toast.error(err.message || "Gagal menolak project");
+    } finally {
+      setProcessingAction(false);
+    }
+  }, [projectId, currentUser, rejectProject, rejectReason, refresh]);
+
+  const openRejectModal = useCallback(() => {
+    console.log("📝 Open reject modal");
+    setShowRejectModal(true);
+    setRejectReason("");
+  }, []);
+
+  const closeRejectModal = useCallback(() => {
+    setShowRejectModal(false);
+    setRejectReason("");
+  }, []);
+
   // 🔹 Member operations
   const handleAddMember = useCallback(async () => {
     if (!selectedUser) {
@@ -169,8 +220,8 @@ export default function ProjectDetail() {
   // 🔹 Inline editing handlers
   const startEdit = useCallback((field, value) => {
     setEditingField(field);
-    setEditValue(field === 'deadline' ? formatDateForInput(value) : value || "");
-  }, [formatDateForInput]);
+    setEditValue(field === 'deadline' ? new Date(value).toISOString().split('T')[0] : value || "");
+  }, []);
 
   const saveEdit = useCallback(async () => {
     if (!project || !editingField) return;
@@ -309,8 +360,13 @@ export default function ProjectDetail() {
       );
     }
 
-    const displayValue = field === 'deadline' 
-      ? formatDateForDisplay(value)
+    const displayValue = field === 'deadline' && value 
+      ? new Date(value).toLocaleDateString("id-ID", {
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric'
+        })
       : value || (field === 'description' ? "Klik untuk menambahkan deskripsi..." : "Belum ditentukan");
 
     return (
@@ -322,6 +378,54 @@ export default function ProjectDetail() {
         onClick={() => startEdit(field, value)}
       >
         {displayValue}
+      </div>
+    );
+  };
+
+  // 🔹 Render project status with approve/reject buttons - SEDERHANAKAN
+  const renderProjectStatus = () => {
+    const statusConfig = {
+      planning: { color: "bg-gray-100 text-gray-800", label: "Perencanaan" },
+      in_progress: { color: "bg-blue-100 text-blue-800", label: "Dalam Pengerjaan" },
+      review: { color: "bg-orange-100 text-orange-800", label: "Review" },
+      done: { color: "bg-green-100 text-green-800", label: "Selesai" },
+      cancelled: { color: "bg-red-100 text-red-800", label: "Dibatalkan" }
+    };
+
+    const config = statusConfig[project.status] || statusConfig.planning;
+
+    return (
+      <div className="flex items-center gap-3">
+        <span className={`px-3 py-1 rounded-full text-sm font-medium ${config.color}`}>
+          {config.label}
+        </span>
+        
+        {/* Approve/Reject Buttons - SEDERHANAKAN: hanya cek status review */}
+        {project.status === "review" && (
+          <div className="flex gap-2 ml-2">
+            <button
+              onClick={handleApproveProject}
+              disabled={processingAction}
+              className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-2xl hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+            >
+              {processingAction ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <ThumbsUp className="w-4 h-4" />
+              )}
+              {processingAction ? "Memproses..." : "Setujui"}
+            </button>
+            
+            <button
+              onClick={openRejectModal}
+              disabled={processingAction}
+              className="flex items-center gap-2 px-4 py-2 bg-red-500 text-white rounded-2xl hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+            >
+              <ThumbsDown className="w-4 h-4" />
+              Tolak
+            </button>
+          </div>
+        )}
       </div>
     );
   };
@@ -443,7 +547,12 @@ export default function ProjectDetail() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-gray-600">
                 <div className="flex items-center gap-2">
                   <Calendar className="w-4 h-4" />
-                  <span>Due: {formatDateForDisplay(card.due_date)}</span>
+                  <span>Due: {card.due_date ? new Date(card.due_date).toLocaleDateString("id-ID", {
+                    weekday: 'long',
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric'
+                  }) : '-'}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <User className="w-4 h-4" />
@@ -521,14 +630,14 @@ export default function ProjectDetail() {
           {renderEditableField('project_name', project.project_name)}
           {renderEditableField('description', project.description, true)}
           
-          <div className="flex flex-col sm:flex-row gap-4 text-sm text-gray-600">
+          <div className="flex flex-col sm:flex-row gap-4 text-sm text-gray-600 items-center">
             <div className="flex items-center gap-2">
               <Calendar className="w-4 h-4" />
               {renderEditableField('deadline', project.deadline)}
             </div>
             <div className="flex items-center gap-2">
               <span>Status:</span>
-              <span className="font-medium capitalize">{project.status}</span>
+              {renderProjectStatus()}
             </div>
           </div>
         </div>
@@ -870,6 +979,70 @@ export default function ProjectDetail() {
                   className="flex-1 px-4 py-3 bg-blue-500 text-white rounded-2xl hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
                 >
                   Tambahkan
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reject Project Modal */}
+      {showRejectModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl w-full max-w-md">
+            <div className="flex items-center justify-between p-6 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+                <AlertCircle className="w-5 h-5 text-orange-500" />
+                Tolak Project
+              </h3>
+              <button 
+                onClick={closeRejectModal} 
+                disabled={processingAction}
+                className="p-1 hover:bg-gray-100 rounded-full transition-colors disabled:opacity-50"
+              >
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Alasan Penolakan <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                  placeholder="Berikan alasan mengapa project ini ditolak..."
+                  className="w-full border border-gray-300 p-3 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none resize-none bg-white disabled:opacity-50"
+                  rows={4}
+                  disabled={processingAction}
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Alasan penolakan akan dicatat dalam riwayat project.
+                </p>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button 
+                  onClick={closeRejectModal} 
+                  disabled={processingAction}
+                  className="flex-1 px-4 py-3 border border-gray-300 text-gray-700 rounded-2xl hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+                >
+                  Batal
+                </button>
+                <button 
+                  onClick={handleRejectProject} 
+                  disabled={!rejectReason.trim() || processingAction}
+                  className="flex-1 px-4 py-3 bg-red-500 text-white rounded-2xl hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium flex items-center justify-center gap-2"
+                >
+                  {processingAction ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Memproses...
+                    </>
+                  ) : (
+                    "Tolak Project"
+                  )}
                 </button>
               </div>
             </div>

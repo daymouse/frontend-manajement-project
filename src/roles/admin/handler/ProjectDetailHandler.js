@@ -12,6 +12,27 @@ export const useProjectDetailHandler = (projectId) => {
   const [report, setReport] = useState(null);
   const [error, setError] = useState("");
   const [users, setUsers] = useState([]);
+  const [currentUser, setCurrentUser] = useState(null);
+
+  /**
+   * Fetch current user data
+   */
+  const fetchCurrentUser = async () => {
+    try {
+      console.log("👤 Fetching current user...");
+      const res = await apiFetch("/auth/auth/me", { method: "GET" });
+      console.log("👤 Current user response:", res);
+      
+      if (res.success && res.data) {
+        setCurrentUser(res.data);
+        console.log("👤 Current user set:", res.data);
+      } else {
+        console.warn("⚠️ Tidak dapat mengambil data user:", res);
+      }
+    } catch (err) {
+      console.error("❌ Error fetchCurrentUser:", err);
+    }
+  };
 
   /**
    * Fetch detail project
@@ -19,8 +40,11 @@ export const useProjectDetailHandler = (projectId) => {
   const fetchProjectDetail = async () => {
     try {
       setLoading(true);
+      console.log("📋 Fetching project detail for:", projectId);
 
       const res = await apiFetch(`/detail-projects/${projectId}/detail`, { method: "GET" });
+      console.log("📋 Project detail response:", res);
+      
       if (!res.success) throw new Error(res.error || "Gagal memuat detail project");
 
       const {
@@ -143,6 +167,54 @@ export const useProjectDetailHandler = (projectId) => {
     }
   };
 
+  // 🔹 APPROVE PROJECT - DIPERBAIKI DENGAN DEBUG DETAIL
+  const approveProject = async (projectId, userId) => {
+    try {
+      const res = await apiFetch(`/project-review/${projectId}/approve`, {
+        method: "POST",
+        body: JSON.stringify({ user_id: userId }),
+      });
+
+      handleParadoxResponse(res, "approve project");
+      await fetchProjectDetail();
+      return res;
+      
+    } catch (err) {
+      console.error("❌ Error approveProject:", err);
+      throw err;
+    }
+  };
+
+  // 🔹 REJECT PROJECT - DIPERBAIKI DENGAN DEBUG DETAIL
+  const rejectProject = async (projectId, userId, reason) => {
+  try {
+    const res = await apiFetch(`/project-review/${projectId}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ 
+        user_id: userId,
+        reason: reason 
+      }),
+    });
+
+    // FIX: Jika message mengandung "success", anggap berhasil
+    if (res.message && res.message.toLowerCase().includes("success")) {
+      console.log("✅ Reject berhasil:", res.message);
+      await fetchProjectDetail();
+      return res;
+    }
+
+    if (!res.success) {
+      throw new Error(res.error || res.message || "Gagal menolak project");
+    }
+
+    await fetchProjectDetail();
+    return res;
+  } catch (err) {
+    console.error("❌ Error rejectProject:", err);
+    throw err;
+  }
+};
+
   /**
    * Generate report
    */
@@ -257,7 +329,7 @@ export const useProjectDetailHandler = (projectId) => {
   /**
    * Export report ke PDF
    */
- const exportToPDF = async (reportData = report) => {
+  const exportToPDF = async (reportData = report) => {
     try {
       if (!reportData) {
         throw new Error("Tidak ada data report untuk di-export");
@@ -305,7 +377,7 @@ export const useProjectDetailHandler = (projectId) => {
 
       yPosition += 10;
 
-      // Members Activity Section (DIPERBAIKI)
+      // Members Activity Section
       const memberActivityMap = new Map();
       
       if (reportData.report_details?.length > 0) {
@@ -375,7 +447,7 @@ export const useProjectDetailHandler = (projectId) => {
 
       yPosition += 5;
 
-      // Detail Kartu Section (DIPERBAIKI)
+      // Detail Kartu Section
       if (reportData.report_details?.length > 0) {
         if (yPosition > 250) {
           pdf.addPage();
@@ -386,7 +458,7 @@ export const useProjectDetailHandler = (projectId) => {
         pdf.text("DETAIL KARTU", 20, yPosition);
         yPosition += 10;
 
-        pdf.setFontSize(8); // Ukuran font lebih kecil untuk muat lebih banyak data
+        pdf.setFontSize(8);
         reportData.report_details.forEach((card, index) => {
           if (yPosition > 270) {
             pdf.addPage();
@@ -513,7 +585,9 @@ export const useProjectDetailHandler = (projectId) => {
    */
   useEffect(() => {
     if (!projectId) return;
+    console.log("🚀 Initializing ProjectDetailHandler with projectId:", projectId);
     fetchProjectDetail();
+    fetchCurrentUser();
   }, [projectId]);
 
   return {
@@ -525,6 +599,7 @@ export const useProjectDetailHandler = (projectId) => {
     active,
     report,
     users,
+    currentUser,
     refresh: fetchProjectDetail,
     updateProjectInline,
     addProjectMember,
@@ -538,5 +613,7 @@ export const useProjectDetailHandler = (projectId) => {
     removeMember,
     addMember,
     clearReport,
+    approveProject,
+    rejectProject,
   };
 };

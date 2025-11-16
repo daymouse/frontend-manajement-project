@@ -24,14 +24,14 @@ export default function BoardNavbar() {
 
   const tabs = [
     { name: "Board", path: `/user/board/${board_id}` },
-    { name: "statistik", path: `/user/board/${board_id}/statistik` },
-    { name: "Calendar", path: `/user/board/${board_id}/calender` },
+    { name: "Calendar", path: `/user/board/${board_id}/calendar` },
+    { name: "Chat", path: `/user/board/${board_id}/chat` },
   ];
 
   return (
-    <div className="w-full border-b bg-white">
+    <div className="w-full bg-white rounded-t-4xl shadow-sm">
       {/* 🔹 Top Bar */}
-      <div className="flex items-center justify-between px-6 py-3">
+      <div className="flex items-center justify-between px-6 py-4">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-blue-100 text-blue-700 font-semibold flex items-center justify-center rounded-md uppercase">
             {board?.board_name?.[0] || "?"}
@@ -41,7 +41,7 @@ export default function BoardNavbar() {
       </div>
 
       {/* 🔹 Tabs */}
-      <div className="flex items-center gap-2 px-6 border-t border-gray-200">
+      <div className="flex items-center gap-2 px-6 pb-3">
         {tabs.map((tab) => {
           const active = location.pathname === tab.path;
           return (
@@ -58,7 +58,6 @@ export default function BoardNavbar() {
             </Link>
           );
         })}
-        <button className="ml-2 px-2 py-1 text-gray-500 hover:text-gray-700">+</button>
       </div>
     </div>
   );

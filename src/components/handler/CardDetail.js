@@ -2,8 +2,10 @@ import { useState, useEffect, useRef } from "react";
 import { apiFetch } from "./../../Server";
 import { socket } from "./../../socket";
 import { useParams } from "react-router-dom";
+import { useAlert } from "../AlertContext";
 
 export const useCardItemLeader = (card) => {
+  const { showAlert } = useAlert();
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -103,7 +105,7 @@ export const useCardItemLeader = (card) => {
       setDetail(updated);
       
       if (action === "approve") {
-        alert("✅ Subtask berhasil di-approve!");
+        showAlert("✅ Subtask berhasil di-approve!");
       }
     } catch (err) {
       console.error("❌ Gagal update subtask:", err);
@@ -127,34 +129,36 @@ export const useCardItemLeader = (card) => {
         }),
       });
 
-      // 2. Tambahkan komentar reject
       const commentData = {
         card_id: detail.card_id,
         user_id: currentUser?.user_id,
-        comment_text: commentText,
-        tagged_subtask_id: rejectingSubtask.subtask_id,
-        is_reject_comment: true
+        subtask_id: rejectingSubtask.subtask_id,
+        reason: commentText
       };
 
-      await apiFetch("/comment", {
+      await apiFetch("/comment/reject", {
         method: "POST",
         body: JSON.stringify(commentData),
       });
 
-      // 3. Refresh data
-      const updated = await apiFetch(`/card/${detail.card_id}/detail`);
-      setDetail(updated);
+      // 3. Refresh data card
+      const updatedCard = await apiFetch(`/card/${detail.card_id}/detail`);
+      setDetail(updatedCard);
       
-      // 4. Reset state
+      // 4. Refresh comments
+      const updatedComments = await apiFetch(`/comment/card/${detail.card_id}`);
+      setComments(updatedComments || []);
+      
+      // 5. Reset state
       setCommentText("");
       setRejectingSubtask(null);
       setTaggedSubtask(null);
       setSelectedSubtaskId(rejectingSubtask.subtask_id);
       
-      alert("❌ Subtask berhasil ditolak!");
+      showAlert("❌ Subtask berhasil ditolak!");
     } catch (err) {
       console.error("❌ Gagal reject subtask:", err);
-      alert("Gagal menolak subtask.");
+      showAlert("Gagal menolak subtask.");
     } finally {
       setProcessing(false);
     }
@@ -260,7 +264,7 @@ export const useCardItemLeader = (card) => {
           ? `/card/${detail.card_id}/approve`
           : `/card/${detail.card_id}/revise`;
       await apiFetch(endpoint, { method: "POST" });
-      alert(
+      showAlert(
         type === "approve"
           ? "✅ Card berhasil di-approve!"
           : "🔁 Card dikembalikan untuk revisi!"
@@ -346,7 +350,7 @@ export const useCardItemLeader = (card) => {
       
     } catch (err) {
       console.error("❌ Gagal menambahkan komentar:", err);
-      alert("Gagal menambahkan komentar.");
+      showAlert("Gagal menambahkan komentar.");
     }
   };
 
@@ -364,9 +368,30 @@ export const useCardItemLeader = (card) => {
   const handleDeleteComment = async (comment_id) => {
     if (!confirm("Hapus komentar ini?")) return;
     try {
+      // Optimistic update
+      setComments((prev) => prev.filter((c) => c.comment_id !== comment_id));
+      
       await apiFetch(`/comment/${comment_id}`, { method: "DELETE" });
+      
+      // PERBAIKAN: Gunakan nama event yang konsisten
+      socket.emit("comment:deleted", { 
+        comment_id, 
+        card_id: detail.card_id 
+      });
+      
+      showAlert("🗑️ Komentar berhasil dihapus!");
+      
     } catch (err) {
       console.error("❌ Gagal menghapus komentar:", err);
+      
+      // Rollback optimistic update jika error
+      try {
+        const updatedComments = await apiFetch(`/comment/card/${detail.card_id}`);
+        setComments(updatedComments || []);
+      } catch (refetchErr) {
+        console.error("❌ Gagal refresh komentar:", refetchErr);
+      }
+      showAlert("Terjadi error saat menghapus komentar.");
     }
   };
 
@@ -377,7 +402,7 @@ export const useCardItemLeader = (card) => {
         const ref = inputRefs.current[editingField];
         if (ref && !ref.contains(e.target)) {
           const newValue = ref.querySelector("input, textarea, select")?.value;
-          if (newValue !== undefined && newValue !== detail[editingField]) {
+          if (newValue !== undefined && newValue !== detail?.[editingField]) {
             updateCardField(editingField, newValue);
           }
           setEditingField(null);
@@ -388,7 +413,7 @@ export const useCardItemLeader = (card) => {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [editingField, detail]);
 
-  // === SOCKET EFFECT ===
+  // === SOCKET EFFECT - DIPERBAIKI UNTUK KONSISTENSI ===
   useEffect(() => {
     if (!detail) return;
 
@@ -396,6 +421,7 @@ export const useCardItemLeader = (card) => {
     socket.emit("join_board", board_id);
     socket.emit("join_card_comments", detail.card_id);
 
+    // Existing socket events untuk card dan subtask
     socket.on("subtask_status_changed", ({ subtask_id, status }) => {
       setDetail((prev) => ({
         ...prev,
@@ -475,34 +501,83 @@ export const useCardItemLeader = (card) => {
       });
     });
 
-    // Comment events
+    // =====================================================
+    // 🗣️ COMMENT SOCKET EVENTS - DIPERBAIKI UNTUK KONSISTENSI
+    // =====================================================
+    
     socket.on("comment:new", (newComment) => {
-      setComments((prev) => [...prev, newComment]);
+      console.log("📨 [SOCKET] comment:new received:", newComment);
+      if (newComment.card_id !== detail.card_id) return;
       
-      // Notify user if they are mentioned in a subtask
-      if (newComment.tagged_subtask_id && 
-          detail?.subtasks?.find(s => s.subtask_id === newComment.tagged_subtask_id)?.assigned_to === currentUser?.user_id) {
-        alert(`💬 Anda disebutkan dalam komentar untuk subtask: ${newComment.tagged_subtask?.subtask_title}`);
-      }
+      setComments(prev => {
+        // Cegah duplikasi komentar
+        if (prev.find(c => c.comment_id === newComment.comment_id)) {
+          return prev;
+        }
+        return [...prev, newComment];
+      });
     });
 
-    socket.on("comment:updated", (updated) => {
-      setComments((prev) =>
-        prev.map((c) => (c.comment_id === updated.comment_id ? updated : c))
+    socket.on("comment:updated", (updatedComment) => {
+      console.log("✏️ [SOCKET] comment:updated received:", updatedComment);
+      if (updatedComment.card_id !== detail.card_id) return;
+      
+      setComments(prev =>
+        prev.map((comment) => 
+          comment.comment_id === updatedComment.comment_id ? updatedComment : comment
+        )
       );
     });
 
-    socket.on("comment:deleted", ({ comment_id }) => {
-      setComments((prev) => prev.filter((c) => c.comment_id !== comment_id));
+    // PERBAIKAN: Handler untuk kedua event delete (konsisten dengan useCardHandlers)
+    socket.on("comment:deleted", (deletedData) => {
+      console.log("🗑️ [SOCKET] comment:deleted received:", deletedData);
+      const { comment_id, card_id } = deletedData;
+      
+      if (card_id === detail.card_id) {
+        setComments(prev => 
+          prev.filter((c) => c.comment_id !== comment_id)
+        );
+      }
+    });
+
+    socket.on("comment_deleted", (deletedData) => {
+      console.log("🗑️ [SOCKET] comment_deleted received:", deletedData);
+      const { comment_id, card_id } = deletedData;
+      
+      if (card_id === detail.card_id) {
+        setComments(prev => 
+          prev.filter((c) => c.comment_id !== comment_id)
+        );
+      }
     });
 
     socket.on("comment:reject", (rejectComment) => {
-      setComments((prev) => [...prev, rejectComment]);
+      console.log("❌ [SOCKET] comment:reject received:", rejectComment);
+      if (rejectComment.card_id !== detail.card_id) return;
+      
+      setComments((prev) => {
+        // Cegah duplikasi
+        if (prev.find(c => c.comment_id === rejectComment.comment_id)) {
+          return prev;
+        }
+        return [...prev, rejectComment];
+      });
+      
       setActiveTab("comments");
       if (rejectComment.subtask_id) {
         setSelectedSubtaskId(rejectComment.subtask_id);
       }
-      alert(`❌ Subtask #${rejectComment.subtask_id} ditolak: buka tab komentar untuk alasan.`);
+      
+      showAlert(`❌ Subtask ditolak: buka tab komentar untuk alasan.`);
+    });
+
+    // Event untuk typing indicator (opsional, untuk konsistensi)
+    socket.on("comment_typing", ({ user_id, user_name, card_id, is_typing }) => {
+      if (card_id === detail.card_id && user_id !== currentUser?.user_id) {
+        console.log(`👤 ${user_name} is ${is_typing ? 'typing' : 'not typing'}`);
+        // Bisa ditambahkan state untuk typing indicator jika diperlukan
+      }
     });
 
     socket.on("card_status_changed", () => {
@@ -514,16 +589,16 @@ export const useCardItemLeader = (card) => {
       socket.emit("leave_card", detail.card_id);
       socket.emit("leave_board", board_id);
       socket.emit("leave_card_comments", detail.card_id);
-      socket.off("subtask_status_changed");
-      socket.off("subtask_added");
-      socket.off("subtask_assigned");
-      socket.off("blocker_reported");
-      socket.off("blocker_solved");
-      socket.off("comment:new");
-      socket.off("comment:updated");
-      socket.off("comment:deleted");
-      socket.off("comment:reject");
-      socket.off("card_status_changed");
+      
+      // PERBAIKAN: Cleanup semua event listeners dengan tepat dan konsisten
+      const events = [
+        "subtask_status_changed", "subtask_added", "subtask_assigned",
+        "blocker_reported", "blocker_solved", "comment:new", 
+        "comment:updated", "comment:deleted", "comment_deleted", 
+        "comment:reject", "comment_typing", "card_status_changed"
+      ];
+      
+      events.forEach(event => socket.off(event));
     };
   }, [detail, board_id, currentUser?.user_id]);
 

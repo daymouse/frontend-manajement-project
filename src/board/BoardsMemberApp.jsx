@@ -1,7 +1,8 @@
 import { Outlet, Routes, Route, Navigate } from "react-router-dom";
 import BoardMember from "./pages/member/BoardMember";
 import NavbarBoardUser from "../components/BoardNavbarUser";
-import Statistik from "./pages/member/Statistik";
+import CalendarComponent from "./pages/member/Calender";
+import Chat from "./pages/member/Chat";
 
 export default function BoardMemberApp() {
   return (
@@ -13,7 +14,9 @@ export default function BoardMemberApp() {
           <Route index element={<BoardMember />} />
 
           {/* Halaman statistik user */}
-          <Route path="statistik" element={<Statistik />} />
+          <Route path="calender" element={<CalendarComponent />} />
+
+          <Route path="chat" element={<Chat />} />
 
           {/* Fallback kalau route tidak cocok */}
           <Route path="*" element={<Navigate to="." replace />} />
