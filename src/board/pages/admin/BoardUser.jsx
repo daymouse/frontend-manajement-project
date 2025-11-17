@@ -53,24 +53,11 @@ export default function Task() {
     }
   };
 
-  // Check if review has been requested
-  const checkReviewStatus = async () => {
-    try {
-      // Anda perlu menyesuaikan endpoint ini sesuai dengan API yang tersedia
-      const res = await apiFetch(`/project/projects/${board_id}`, "GET");
-      if (res.project && res.project.status === "review_requested") {
-        setIsReviewRequested(true);
-      }
-    } catch (err) {
-      console.error("❌ Gagal check status review:", err);
-    }
-  };
 
   useEffect(() => {
     if (board_id) {
       fetchProjectDetail();
       fetchCards();
-      checkReviewStatus();
     }
   }, [board_id]);
 

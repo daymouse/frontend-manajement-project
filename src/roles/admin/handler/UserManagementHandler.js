@@ -27,7 +27,11 @@ export const useUserManagementHandler = () => {
     email: "",
   });
   const [creatingUser, setCreatingUser] = useState(false);
-  const [showAddUserModal, setShowAddUserModal] = useState(false); // 🆕 Modal state
+  const [showAddUserModal, setShowAddUserModal] = useState(false);
+  
+  // 🗑️ state untuk delete user
+  const [userToDelete, setUserToDelete] = useState(null);
+  const [deletingUser, setDeletingUser] = useState(false);
 
   const token = localStorage.getItem("token");
 
@@ -74,6 +78,7 @@ export const useUserManagementHandler = () => {
       if (res.data) {
         setRoles((prev) => [...prev, ...res.data]);
         setNewRole("");
+        setShowInput(false);
       }
     } catch (err) {
       console.error("❌ Error createRole:", err);
@@ -89,10 +94,43 @@ export const useUserManagementHandler = () => {
         method: "PATCH",
         body: JSON.stringify({ aturRole: roleId }),
       });
-      fetchUsers(); // refresh user data
+      
+      // Update local state immediately tanpa refresh
+      setUsers(prev => prev.map(user => 
+        user.user_id === userId 
+          ? { ...user, role_id: roleId }
+          : user
+      ));
+      
       setOpenUserRoleDropdown(null);
     } catch (err) {
       console.error("❌ Error updateRole:", err);
+      // Rollback jika error
+      fetchUsers();
+    }
+  };
+
+  // === DELETE USER ===
+  const handleDeleteUser = async () => {
+    if (!userToDelete) return;
+    
+    setDeletingUser(true);
+    try {
+      await apiFetch(`/users/user/${userToDelete.user_id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      
+      // Remove user from local state immediately
+      setUsers(prev => prev.filter(user => user.user_id !== userToDelete.user_id));
+      setUserToDelete(null);
+      
+      alert("✅ User berhasil dihapus");
+    } catch (err) {
+      console.error("❌ Error deleteUser:", err);
+      alert("❌ Gagal menghapus user");
+    } finally {
+      setDeletingUser(false);
     }
   };
 
@@ -130,19 +168,20 @@ export const useUserManagementHandler = () => {
       alert("Semua field wajib diisi!");
       return;
     }
+
     if (password !== confirm_password) {
       alert("Konfirmasi password tidak cocok!");
       return;
     }
 
     setCreatingUser(true);
+
     try {
       const res = await apiFetch("/auth/register", {
         method: "POST",
         body: JSON.stringify({
           username,
           password,
-          confirm_password,
           full_name,
           email,
         }),
@@ -150,6 +189,8 @@ export const useUserManagementHandler = () => {
 
       if (res?.data) {
         alert("✅ User berhasil ditambahkan");
+
+        // Reset form input
         setNewUser({
           username: "",
           password: "",
@@ -157,8 +198,9 @@ export const useUserManagementHandler = () => {
           full_name: "",
           email: "",
         });
-        setShowAddUserModal(false); // 🆕 Tutup modal setelah sukses
-        fetchUsers();
+
+        setShowAddUserModal(false);
+        fetchUsers(); // Refresh data user
       } else if (res?.error) {
         alert(`❌ Gagal: ${res.error}`);
       }
@@ -206,13 +248,19 @@ export const useUserManagementHandler = () => {
     handleCreateRole,
     handleUpdateRole,
     handleInlineEdit,
+    handleDeleteUser,
+    
+    // 🗑️ Delete user states
+    userToDelete,
+    setUserToDelete,
+    deletingUser,
 
     // 🧩 Tambahan untuk Add User
     newUser,
     setNewUser,
     creatingUser,
     handleAddUser,
-    showAddUserModal, // 🆕
-    setShowAddUserModal, // 🆕
+    showAddUserModal,
+    setShowAddUserModal,
   };
 };

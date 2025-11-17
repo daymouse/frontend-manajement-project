@@ -71,22 +71,30 @@ export default function CardModalMember({ cardId, onClose }) {
     saveEditing,
   } = useCardHandlers(cardId, commentInputRef);
 
-  // PERBAIKAN: Sederhanakan sorting seperti di CardItemLeader
-  // ALTERNATIF: Gunakan logika yang lebih robust
-useEffect(() => {
-  if (card?.subtasks) {
-    const sorted = [...card.subtasks].sort((a, b) => {
-      // Urutkan: done/approved di akhir, lainnya di awal
-      const aIsDone = a.status === "done" || a.status === "approved";
-      const bIsDone = b.status === "done" || b.status === "approved";
-      
-      if (aIsDone && !bIsDone) return 1;
-      if (!aIsDone && bIsDone) return -1;
-      return 0;
-    });
-    setSortedSubtasks(sorted);
-  }
-}, [card?.subtasks]);
+  // PERBAIKAN: Update sortedSubtasks setiap kali card berubah
+  useEffect(() => {
+    if (card?.subtasks) {
+      const sorted = [...card.subtasks].sort((a, b) => {
+        // Urutkan: done/approved di akhir, lainnya di awal
+        const aIsDone = a.status === "done" || a.status === "approved";
+        const bIsDone = b.status === "done" || b.status === "approved";
+        
+        if (aIsDone && !bIsDone) return 1;
+        if (!aIsDone && bIsDone) return -1;
+        return 0;
+      });
+      setSortedSubtasks(sorted);
+    }
+  }, [card?.subtasks]); // PERBAIKAN: Gunakan card?.subtasks sebagai dependency
+
+  // PERBAIKAN: Tambahkan useEffect untuk menutup dropdown ketika status berubah
+  useEffect(() => {
+    // Tutup semua dropdown ketika card loading (setelah aksi selesai)
+    if (loading) {
+      setActiveDropdown(null);
+      setEditingSubtaskId(null);
+    }
+  }, [loading]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -114,13 +122,13 @@ useEffect(() => {
 
   if (!cardId) return null;
 
-const getStatusBadge = (status) => {
-  if (status === "done" || status === "approved") return "bg-green-100 text-green-700"; // ← Include approved
-  if (status === "in_progress") return "bg-yellow-100 text-yellow-700";
-  if (status === "review") return "bg-blue-100 text-blue-700";
-  if (status === "rejected") return "bg-red-100 text-red-700";
-  return "bg-gray-100 text-gray-600";
-};
+  const getStatusBadge = (status) => {
+    if (status === "done" || status === "approved") return "bg-green-100 text-green-700";
+    if (status === "in_progress") return "bg-yellow-100 text-yellow-700";
+    if (status === "review") return "bg-blue-100 text-blue-700";
+    if (status === "rejected") return "bg-red-100 text-red-700";
+    return "bg-gray-100 text-gray-600";
+  };
 
   const formatDate = (dateString) => {
     if (!dateString) return "Tanggal tidak tersedia";
@@ -139,8 +147,17 @@ const getStatusBadge = (status) => {
     }
   };
 
+  // PERBAIKAN: Tambahkan kondisi yang lebih ketat untuk editing
+  const canEditSubtask = (subtask) => {
+    if (!isOwner) return false;
+    if (card.status === "review" || card.status === "done") return false;
+    if (subtask.status === "done" || subtask.status === "approved") return false;
+    return true;
+  };
+
   const handleFieldClick = (subtaskId, field, currentValue) => {
-    if (isOwner && card.status !== "review" && card.status !== "done") {
+    const subtask = sortedSubtasks.find(s => s.subtask_id === subtaskId);
+    if (subtask && canEditSubtask(subtask)) {
       startEditing(subtaskId, field, currentValue);
     }
   };
@@ -163,27 +180,47 @@ const getStatusBadge = (status) => {
 
   const toggleDropdown = (subtaskId, event) => {
     event.stopPropagation();
-    setActiveDropdown(activeDropdown === subtaskId ? null : subtaskId);
+    const subtask = sortedSubtasks.find(s => s.subtask_id === subtaskId);
+    if (subtask && canEditSubtask(subtask)) {
+      setActiveDropdown(activeDropdown === subtaskId ? null : subtaskId);
+    }
   };
 
   const getDropdownRef = (subtaskId) => (el) => {
     dropdownRefs.current[subtaskId] = el;
   };
 
-  // PERBAIKAN: Gunakan handler langsung tanpa wrapper yang kompleks
-  // Karena useEffect sudah menangani sorting otomatis
+  // PERBAIKAN: Handler untuk toggle dropdown assignee dengan kondisi
+  const toggleAssigneeDropdown = (subtaskId, event) => {
+    event.stopPropagation();
+    const subtask = sortedSubtasks.find(s => s.subtask_id === subtaskId);
+    if (subtask && canEditSubtask(subtask)) {
+      setEditingSubtaskId(editingSubtaskId === subtaskId ? null : subtaskId);
+    }
+  };
 
-  // =====================================================
-  // 🛠️ PERBAIKAN: Komponen CommentItem yang lebih aman
-  // =====================================================
+  // PERBAIKAN: Handler untuk aksi subtask yang otomatis update UI
+  const handleStartWorkWithUpdate = async (subtaskId) => {
+    await handleStartWork(subtaskId);
+    // UI akan otomatis update karena card.subtasks berubah dan useEffect triggered
+  };
+
+  const handleFinishWorkWithUpdate = async (subtaskId) => {
+    await handleFinishWork(subtaskId);
+    // UI akan otomatis update karena card.subtasks berubah dan useEffect triggered
+  };
+
+  const handleAssignSubtaskWithUpdate = async (subtaskId, userId) => {
+    await handleAssignSubtask(subtaskId, userId);
+    setEditingSubtaskId(null); // Tutup dropdown setelah assign
+  };
+
   const CommentItem = ({ comment, depth = 0 }) => {
     if (!comment) return null;
     
     const isReply = depth > 0;
     
-    // Safe user data extraction
     const getUserName = () => {
-      // Coba berbagai kemungkinan struktur user
       const user = comment.user || comment.users || {};
       return user.full_name || user.username || "Unknown User";
     };
@@ -399,377 +436,345 @@ const getStatusBadge = (status) => {
                     {/* Subtasks List */}
                     {sortedSubtasks.length ? (
                       <div className="space-y-3 max-h-80 overflow-y-auto custom-scrollbar">
-                        {sortedSubtasks.map((s) => (
-                          <div
-                            key={s.subtask_id}
-                            className={`p-4 rounded-xl border transition-all duration-300 shadow-sm ${
-                              selectedSubtaskId === s.subtask_id 
-                                ? 'border-indigo-300 bg-indigo-50' 
-                                : s.status === "done" 
-                                  ? 'border-gray-200 bg-gray-50 opacity-75' 
-                                  : 'border-gray-200 bg-white hover:bg-gray-50'
-                            }`}
-                          >
-                            {isOwner && card.status !== "review" && card.status !== "done" && s.status !== "done" && (
-                              <div 
-                                className="absolute right-4 top-4 z-10"
-                                ref={getDropdownRef(s.subtask_id)}
-                              >
-                                <button
-                                  onClick={(e) => toggleDropdown(s.subtask_id, e)}
-                                  className="p-1 rounded-lg hover:bg-gray-100 transition-colors"
+                        {sortedSubtasks.map((s) => {
+                          const canEdit = canEditSubtask(s);
+                          const isCompleted = s.status === "done" || s.status === "approved";
+                          
+                          return (
+                            <div
+                              key={s.subtask_id}
+                              className={`p-4 rounded-xl border transition-all duration-300 shadow-sm relative ${
+                                selectedSubtaskId === s.subtask_id 
+                                  ? 'border-indigo-300 bg-indigo-50' 
+                                  : isCompleted
+                                    ? 'border-gray-200 bg-gray-50 opacity-75' 
+                                    : 'border-gray-200 bg-white hover:bg-gray-50'
+                              }`}
+                            >
+                              {/* PERBAIKAN: Dropdown titik tiga vertikal dengan kondisi yang diperbaiki */}
+                              {canEdit && (
+                                <div 
+                                  className="absolute right-4 top-4 z-10"
+                                  ref={getDropdownRef(s.subtask_id)}
                                 >
-                                  <MoreVertical size={16} className="text-gray-500" />
-                                </button>
-                                
-                                <AnimatePresence>
-                                  {activeDropdown === s.subtask_id && (
-                                    <motion.div
-                                      initial={{ opacity: 0, scale: 0.95, y: -5 }}
-                                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                                      exit={{ opacity: 0, scale: 0.95, y: -5 }}
-                                      transition={{ duration: 0.15 }}
-                                      className="absolute right-0 top-8 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-50 min-w-32"
-                                    >
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          openReportModal("subtask", s.subtask_id);
-                                          setActiveDropdown(null);
-                                        }}
-                                        className="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                                  <button
+                                    onClick={(e) => toggleDropdown(s.subtask_id, e)}
+                                    className="p-1 rounded-lg hover:bg-gray-100 transition-colors"
+                                  >
+                                    <MoreVertical size={16} className="text-gray-500" />
+                                  </button>
+                                  
+                                  <AnimatePresence>
+                                    {activeDropdown === s.subtask_id && (
+                                      <motion.div
+                                        initial={{ opacity: 0, scale: 0.95, y: -5 }}
+                                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                                        exit={{ opacity: 0, scale: 0.95, y: -5 }}
+                                        transition={{ duration: 0.15 }}
+                                        className="absolute right-0 top-8 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-50 min-w-32"
                                       >
-                                        <AlertCircle size={14} />
-                                        Report
-                                      </button>
-                                      {s.status === "todo" && (
                                         <button
                                           onClick={(e) => {
                                             e.stopPropagation();
-                                            if (confirm("Yakin ingin menghapus subtask ini?")) {
-                                              handleDeleteSubtask(s.subtask_id);
-                                              setActiveDropdown(null);
-                                            }
+                                            openReportModal("subtask", s.subtask_id);
+                                            setActiveDropdown(null);
                                           }}
                                           className="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
                                         >
-                                          <Trash2 size={14} />
-                                          Hapus
+                                          <AlertCircle size={14} />
+                                          Report
                                         </button>
-                                      )}
-                                    </motion.div>
-                                  )}
-                                </AnimatePresence>
-                              </div>
-                            )}
+                                        {s.status === "todo" && (
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              if (confirm("Yakin ingin menghapus subtask ini?")) {
+                                                handleDeleteSubtask(s.subtask_id);
+                                                setActiveDropdown(null);
+                                              }
+                                            }}
+                                            className="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                                          >
+                                            <Trash2 size={14} />
+                                            Hapus
+                                          </button>
+                                        )}
+                                      </motion.div>
+                                    )}
+                                  </AnimatePresence>
+                                </div>
+                              )}
 
-                            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3 pr-8">
-                              <div className="flex-1">
-                                <div className="flex flex-col sm:flex-row sm:items-center gap-2 mb-2">
-                                  {editingField === `${s.subtask_id}-subtask_title` && s.status !== "done" ? (
-                                    <input
-                                      type="text"
+                              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3 pr-8">
+                                <div className="flex-1">
+                                  <div className="flex flex-col sm:flex-row sm:items-center gap-2 mb-2">
+                                    {editingField === `${s.subtask_id}-subtask_title` && canEdit ? (
+                                      <input
+                                        type="text"
+                                        value={editingValue}
+                                        onChange={(e) => setEditingValue(e.target.value)}
+                                        onBlur={() => handleFieldBlur(s.subtask_id, 'subtask_title')}
+                                        onKeyDown={(e) => handleFieldKeyDown(e, s.subtask_id, 'subtask_title')}
+                                        className="font-medium text-gray-800 text-sm sm:text-base border border-indigo-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full"
+                                        autoFocus
+                                      />
+                                    ) : (
+                                      <h3 
+                                        className={`font-medium text-sm sm:text-base line-clamp-2 sm:line-clamp-1 ${
+                                          isCompleted ? "text-gray-500 line-through" : "text-gray-800"
+                                        } ${
+                                          canEdit
+                                            ? 'cursor-pointer hover:bg-gray-100 rounded-lg px-2 py-1 transition-colors' 
+                                            : ''
+                                        }`}
+                                        onClick={() => handleFieldClick(s.subtask_id, 'subtask_title', s.subtask_title)}
+                                      >
+                                        {s.subtask_title || "Untitled Subtask"}
+                                      </h3>
+                                    )}
+                                    <span
+                                      className={`px-2 py-1 rounded-lg text-xs font-medium ${getStatusBadge(
+                                        s.status
+                                      )} self-start sm:self-auto`}
+                                    >
+                                      {s.status?.replace("_", " ") || "todo"}
+                                    </span>
+                                  </div>
+                                  
+                                  {editingField === `${s.subtask_id}-description` && canEdit ? (
+                                    <textarea
                                       value={editingValue}
                                       onChange={(e) => setEditingValue(e.target.value)}
-                                      onBlur={() => handleFieldBlur(s.subtask_id, 'subtask_title')}
-                                      onKeyDown={(e) => handleFieldKeyDown(e, s.subtask_id, 'subtask_title')}
-                                      className="font-medium text-gray-800 text-sm sm:text-base border border-indigo-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full"
+                                      onBlur={() => handleFieldBlur(s.subtask_id, 'description')}
+                                      onKeyDown={(e) => handleFieldKeyDown(e, s.subtask_id, 'description')}
+                                      className="text-xs text-gray-500 border border-indigo-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full resize-none"
+                                      rows="2"
                                       autoFocus
                                     />
                                   ) : (
-                                    <h3 
-                                      className={`font-medium text-sm sm:text-base line-clamp-2 sm:line-clamp-1 ${
-                                        s.status === "done" ? "text-gray-500 line-through" : "text-gray-800"
+                                    <p 
+                                      className={`text-xs line-clamp-2 mb-3 ${
+                                        isCompleted ? "text-gray-400" : "text-gray-500"
                                       } ${
-                                        isOwner && card.status !== "review" && card.status !== "done" && s.status !== "done"
+                                        canEdit
                                           ? 'cursor-pointer hover:bg-gray-100 rounded-lg px-2 py-1 transition-colors' 
                                           : ''
                                       }`}
-                                      onClick={() => handleFieldClick(s.subtask_id, 'subtask_title', s.subtask_title)}
+                                      onClick={() => handleFieldClick(s.subtask_id, 'description', s.description || '')}
                                     >
-                                      {s.subtask_title || "Untitled Subtask"}
-                                    </h3>
+                                      {s.description || "Klik untuk menambah deskripsi..."}
+                                    </p>
                                   )}
-                                  <span
-                                    className={`px-2 py-1 rounded-lg text-xs font-medium ${getStatusBadge(
-                                      s.status
-                                    )} self-start sm:self-auto`}
-                                  >
-                                    {s.status?.replace("_", " ") || "todo"}
-                                  </span>
-                                </div>
-                                
-                                {editingField === `${s.subtask_id}-description` && s.status !== "done" ? (
-                                  <textarea
-                                    value={editingValue}
-                                    onChange={(e) => setEditingValue(e.target.value)}
-                                    onBlur={() => handleFieldBlur(s.subtask_id, 'description')}
-                                    onKeyDown={(e) => handleFieldKeyDown(e, s.subtask_id, 'description')}
-                                    className="text-xs text-gray-500 border border-indigo-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full resize-none"
-                                    rows="2"
-                                    autoFocus
-                                  />
-                                ) : (
-                                  <p 
-                                    className={`text-xs line-clamp-2 mb-3 ${
-                                      s.status === "done" ? "text-gray-400" : "text-gray-500"
-                                    } ${
-                                      isOwner && card.status !== "review" && card.status !== "done" && s.status !== "done"
-                                        ? 'cursor-pointer hover:bg-gray-100 rounded-lg px-2 py-1 transition-colors' 
-                                        : ''
-                                    }`}
-                                    onClick={() => handleFieldClick(s.subtask_id, 'description', s.description || '')}
-                                  >
-                                    {s.description || "Klik untuk menambah deskripsi..."}
-                                  </p>
-                                )}
 
-                                <div className="flex items-center justify-between mb-2">
-                                  <div className="flex items-center gap-2">
+                                  <div className="flex items-center justify-between mb-2">
                                     <div className="flex items-center gap-2">
-                                      <div
-                                        className={`flex items-center gap-2 ${
-                                          ownerCard.includes(currentUser?.user_id) &&
-                                          card.status !== "review" &&
-                                          card.status !== "done" &&
-                                          s.status !== "done"
-                                            ? "cursor-pointer hover:bg-gray-100 px-2 py-1 rounded-lg transition-colors"
-                                            : ""
-                                        }`}
-                                        onClick={() => {
-                                          const canEdit =
-                                            ownerCard.includes(
-                                              currentUser?.user_id
-                                            ) &&
-                                            card.status !== "review" &&
-                                            card.status !== "done" &&
-                                            s.status !== "done";
-                                          if (canEdit) {
-                                            const newId =
-                                              editingSubtaskId === s.subtask_id
-                                                ? null
-                                                : s.subtask_id;
-                                            setEditingSubtaskId(newId);
-                                          }
-                                        }}
-                                      >
-                                        <div className={`w-6 h-6 bg-gradient-to-br from-indigo-400 to-blue-500 rounded-full flex items-center justify-center text-white text-xs font-medium ${
-                                          s.status === "done" ? "opacity-50" : ""
-                                        }`}>
-                                          {s.assignee?.full_name?.charAt(0) || "?"}
+                                      {/* PERBAIKAN: Dropdown assignee yang berfungsi dengan kondisi */}
+                                      <div className="relative">
+                                        <div
+                                          className={`flex items-center gap-2 ${
+                                            canEdit
+                                              ? "cursor-pointer hover:bg-gray-100 px-2 py-1 rounded-lg transition-colors"
+                                              : ""
+                                          }`}
+                                          onClick={(e) => {
+                                            if (canEdit) {
+                                              toggleAssigneeDropdown(s.subtask_id, e);
+                                            }
+                                          }}
+                                        >
+                                          <div className={`w-6 h-6 bg-gradient-to-br from-indigo-400 to-blue-500 rounded-full flex items-center justify-center text-white text-xs font-medium ${
+                                            isCompleted ? "opacity-50" : ""
+                                          }`}>
+                                            {s.assignee?.full_name?.charAt(0) || "?"}
+                                          </div>
+                                          <span className={`text-sm truncate max-w-20 sm:max-w-32 ${
+                                            isCompleted ? "text-gray-500" : "text-gray-600"
+                                          }`}>
+                                            {s.assignee?.full_name || "Belum ditugaskan"}
+                                          </span>
                                         </div>
-                                        <span className={`text-sm truncate max-w-20 sm:max-w-32 ${
-                                          s.status === "done" ? "text-gray-500" : "text-gray-600"
-                                        }`}>
-                                          {s.assignee?.full_name || "Belum ditugaskan"}
-                                        </span>
-                                      </div>
 
-                                      {editingSubtaskId === s.subtask_id && s.status !== "done" && (
-                                        <div className="absolute top-full mt-1 left-0 bg-white border border-gray-200 rounded-xl shadow-lg p-3 w-64 z-50">
-                                          {contributors?.length ? (
-                                            <>
-                                              <div
-                                                onClick={() => handleAssignSubtask(s.subtask_id, currentUser.user_id)}
-                                                className="flex items-center gap-3 p-2 mb-2 rounded-lg hover:bg-blue-50 cursor-pointer transition-colors border border-blue-100"
-                                              >
-                                                <div className="w-8 h-8 bg-gradient-to-br from-green-400 to-green-600 rounded-full flex items-center justify-center text-white text-sm font-medium">
-                                                  {currentUser.full_name?.charAt(0) || "U"}
-                                                </div>
-                                                <div className="flex flex-col">
-                                                  <span className="font-medium text-sm">Assign to Me</span>
-                                                  <span className="text-xs text-gray-500">{currentUser.full_name || "User"}</span>
-                                                </div>
-                                              </div>
-
-                                              <hr className="my-2 border-gray-200" />
-
-                                              <div className="max-h-48 overflow-y-auto custom-scrollbar">
-                                                {contributors.map((c) => (
-                                                  <div
-                                                    key={c.users?.user_id || `contributor-${Math.random()}`}
-                                                    onClick={() =>
-                                                      handleAssignSubtask(s.subtask_id, c.users?.user_id)
-                                                    }
-                                                    className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 cursor-pointer transition-colors"
-                                                  >
-                                                    <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-indigo-500 rounded-full flex items-center justify-center text-white text-sm font-medium">
-                                                      {c.users?.full_name?.charAt(0) || "C"}
-                                                    </div>
-                                                    <div className="flex flex-col">
-                                                      <span className="text-sm font-medium">{c.users?.full_name || "Contributor"}</span>
-                                                      <span className="text-xs text-gray-500 capitalize">
-                                                        {c.role || "member"}
-                                                      </span>
-                                                    </div>
+                                        {/* PERBAIKAN: Dropdown contributor */}
+                                        {editingSubtaskId === s.subtask_id && canEdit && (
+                                          <div className="absolute top-full mt-1 left-0 bg-white border border-gray-200 rounded-xl shadow-lg p-3 w-64 z-50">
+                                            {contributors?.length ? (
+                                              <>
+                                                <div
+                                                  onClick={() => {
+                                                    handleAssignSubtaskWithUpdate(s.subtask_id, currentUser.user_id);
+                                                  }}
+                                                  className="flex items-center gap-3 p-2 mb-2 rounded-lg hover:bg-blue-50 cursor-pointer transition-colors border border-blue-100"
+                                                >
+                                                  <div className="w-8 h-8 bg-gradient-to-br from-green-400 to-green-600 rounded-full flex items-center justify-center text-white text-sm font-medium">
+                                                    {currentUser.full_name?.charAt(0) || "U"}
                                                   </div>
-                                                ))}
-                                              </div>
-                                            </>
-                                          ) : (
-                                            <p className="text-xs text-gray-500 px-2 text-center py-4">
-                                              Tidak ada contributor.
-                                            </p>
-                                          )}
+                                                  <div className="flex flex-col">
+                                                    <span className="font-medium text-sm">Assign to Me</span>
+                                                    <span className="text-xs text-gray-500">{currentUser.full_name || "User"}</span>
+                                                  </div>
+                                                </div>
+
+                                                <hr className="my-2 border-gray-200" />
+
+                                                <div className="max-h-48 overflow-y-auto custom-scrollbar">
+                                                  {contributors.map((c) => (
+                                                    <div
+                                                      key={c.users?.user_id || `contributor-${Math.random()}`}
+                                                      onClick={() => {
+                                                        handleAssignSubtaskWithUpdate(s.subtask_id, c.users?.user_id);
+                                                      }}
+                                                      className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 cursor-pointer transition-colors"
+                                                    >
+                                                      <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-indigo-500 rounded-full flex items-center justify-center text-white text-sm font-medium">
+                                                        {c.users?.full_name?.charAt(0) || "C"}
+                                                      </div>
+                                                      <div className="flex flex-col">
+                                                        <span className="text-sm font-medium">{c.users?.full_name || "Contributor"}</span>
+                                                        <span className="text-xs text-gray-500 capitalize">
+                                                          {c.role || "member"}
+                                                        </span>
+                                                      </div>
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              </>
+                                            ) : (
+                                              <p className="text-xs text-gray-500 px-2 text-center py-4">
+                                                Tidak ada contributor.
+                                              </p>
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-2">
+                                      {editingField === `${s.subtask_id}-estimated_hours` && canEdit ? (
+                                        <input
+                                          type="number"
+                                          value={editingValue}
+                                          onChange={(e) => setEditingValue(e.target.value)}
+                                          onBlur={() => handleFieldBlur(s.subtask_id, 'estimated_hours')}
+                                          onKeyDown={(e) => handleFieldKeyDown(e, s.subtask_id, 'estimated_hours')}
+                                          className="text-xs text-gray-500 border border-indigo-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-500 w-16"
+                                          min="0"
+                                          step="0.5"
+                                          autoFocus
+                                        />
+                                      ) : (
+                                        <div 
+                                          className={`text-xs bg-gray-50 px-2 py-1 rounded-lg ${
+                                            isCompleted ? "text-gray-400" : "text-gray-500"
+                                          } ${
+                                            canEdit
+                                              ? 'cursor-pointer hover:bg-gray-100 transition-colors' 
+                                              : ''
+                                          }`}
+                                          onClick={() => handleFieldClick(s.subtask_id, 'estimated_hours', s.estimated_hours || '0')}
+                                        >
+                                          Est: {s.estimated_hours || 0}h
+                                        </div>
+                                      )}
+                                      
+                                      {s.actual_hours > 0 && (
+                                        <div className={`text-xs bg-gray-50 px-2 py-1 rounded-lg ${
+                                          isCompleted ? "text-gray-400" : "text-gray-500"
+                                        }`}>
+                                          Act: {s.actual_hours}h
                                         </div>
                                       )}
                                     </div>
                                   </div>
 
-                                  <div className="flex items-center gap-2">
-                                    {editingField === `${s.subtask_id}-estimated_hours` && s.status !== "done" ? (
-                                      <input
-                                        type="number"
-                                        value={editingValue}
-                                        onChange={(e) => setEditingValue(e.target.value)}
-                                        onBlur={() => handleFieldBlur(s.subtask_id, 'estimated_hours')}
-                                        onKeyDown={(e) => handleFieldKeyDown(e, s.subtask_id, 'estimated_hours')}
-                                        className="text-xs text-gray-500 border border-indigo-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-500 w-16"
-                                        min="0"
-                                        step="0.5"
-                                        autoFocus
-                                      />
-                                    ) : (
-                                      <div 
-                                        className={`text-xs bg-gray-50 px-2 py-1 rounded-lg ${
-                                          s.status === "done" ? "text-gray-400" : "text-gray-500"
-                                        } ${
-                                          isOwner && card.status !== "review" && card.status !== "done" && s.status !== "done"
-                                            ? 'cursor-pointer hover:bg-gray-100 transition-colors' 
-                                            : ''
-                                        }`}
-                                        onClick={() => handleFieldClick(s.subtask_id, 'estimated_hours', s.estimated_hours || '0')}
+                                  {s.subtask_blockers && s.subtask_blockers.length > 0 && 
+                                  s.subtask_blockers.some((b) => !b.is_resolved) && (
+                                    <button
+                                      onClick={() => {
+                                        setSelectedSubtaskId(s.subtask_id);
+                                        setShowSolveModal(true);
+                                      }}
+                                      className="flex items-center gap-1 text-red-600 text-xs mt-1 hover:underline"
+                                    >
+                                      <AlertCircle size={12} />
+                                      Blocker aktif
+                                    </button>
+                                  )}
+                                </div>
+
+                                <div className="flex flex-col gap-2 sm:items-end mt-2 sm:mt-0">
+                                  <div className="flex flex-wrap gap-2 justify-end items-center">
+                                    {s.status === "todo" && (
+                                      <button
+                                        onClick={() => handleStartWorkWithUpdate(s.subtask_id)}
+                                        disabled={processingId === s.subtask_id || isCompleted}
+                                        className="px-3 py-1.5 bg-green-600 text-white text-xs rounded-lg hover:bg-green-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 min-w-16 justify-center order-1"
                                       >
-                                        Est: {s.estimated_hours || 0}h
-                                      </div>
+                                        {processingId === s.subtask_id ? (
+                                          <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                        ) : (
+                                          "Mulai"
+                                        )}
+                                      </button>
                                     )}
-                                    
-                                    {s.actual_hours > 0 && (
-                                      <div className={`text-xs bg-gray-50 px-2 py-1 rounded-lg ${
-                                        s.status === "done" ? "text-gray-400" : "text-gray-500"
-                                      }`}>
-                                        Act: {s.actual_hours}h
-                                      </div>
+
+                                    {s.status === "in_progress" && (
+                                      <button
+                                        onClick={() => handleFinishWorkWithUpdate(s.subtask_id)} 
+                                        disabled={processingId === s.subtask_id || isCompleted}
+                                        className="px-3 py-1.5 bg-orange-600 text-white text-xs rounded-lg hover:bg-orange-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 min-w-16 justify-center order-1"
+                                      >
+                                        {processingId === s.subtask_id ? (
+                                          <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                        ) : (
+                                          "Selesai"
+                                        )}
+                                      </button>
+                                    )}
+
+                                    {s.status === "rejected" && (
+                                      <button
+                                        onClick={() => handleStartWorkWithUpdate(s.subtask_id)}
+                                        disabled={processingId === s.subtask_id || isCompleted}
+                                        className="px-3 py-1.5 bg-yellow-600 text-white text-xs rounded-lg hover:bg-yellow-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 min-w-16 justify-center order-1"
+                                      >
+                                        {processingId === s.subtask_id ? (
+                                          <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                        ) : (
+                                          "Revisi"
+                                        )}
+                                      </button>
+                                    )}
+
+                                    {/* PERBAIKAN: Hilangkan tombol approve/reject untuk member */}
+                                    {s.status === "review" && (
+                                      <span className="text-blue-700 font-semibold text-xs flex items-center gap-1 order-1">
+                                        <Clock size={12} />
+                                        Menunggu review...
+                                      </span>
+                                    )}
+
+                                    {isCompleted && (
+                                      <span className="text-green-700 font-semibold text-xs flex items-center gap-1 order-1">
+                                        <CheckCircle size={14} />
+                                        Selesai
+                                      </span>
+                                    )}
+
+                                    {!isOwner && (s.status === "in_progress" || s.status === "todo") && !isCompleted && (
+                                      <button
+                                        onClick={() => openReportModal("subtask", s.subtask_id)}
+                                        className="flex items-center gap-1 px-2 py-1 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 text-xs font-medium transition-colors order-2"
+                                      >
+                                        <AlertCircle size={12} />
+                                        Report
+                                      </button>
                                     )}
                                   </div>
                                 </div>
-
-                                {s.subtask_blockers && s.subtask_blockers.length > 0 && 
-                                 s.subtask_blockers.some((b) => !b.is_resolved) && (
-                                  <button
-                                    onClick={() => {
-                                      setSelectedSubtaskId(s.subtask_id);
-                                      setShowSolveModal(true);
-                                    }}
-                                    className="flex items-center gap-1 text-red-600 text-xs mt-1 hover:underline"
-                                  >
-                                    <AlertCircle size={12} />
-                                    Blocker aktif
-                                  </button>
-                                )}
-                              </div>
-
-                              <div className="flex flex-col gap-2 sm:items-end mt-2 sm:mt-0">
-                                <div className="flex flex-wrap gap-2 justify-end items-center">
-                                  {s.status === "todo" && (
-                                    <button
-                                      onClick={() => handleStartWork(s.subtask_id)}
-                                      disabled={processingId === s.subtask_id}
-                                      className="px-3 py-1.5 bg-green-600 text-white text-xs rounded-lg hover:bg-green-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 min-w-16 justify-center order-1"
-                                    >
-                                      {processingId === s.subtask_id ? (
-                                        <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                                      ) : (
-                                        "Mulai"
-                                      )}
-                                    </button>
-                                  )}
-
-                                  {s.status === "in_progress" && (
-                                    <button
-                                      onClick={() => handleFinishWork(s.subtask_id)} 
-                                      disabled={processingId === s.subtask_id}
-                                      className="px-3 py-1.5 bg-orange-600 text-white text-xs rounded-lg hover:bg-orange-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 min-w-16 justify-center order-1"
-                                    >
-                                      {processingId === s.subtask_id ? (
-                                        <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                                      ) : (
-                                        "Selesai"
-                                      )}
-                                    </button>
-                                  )}
-
-                                  {s.status === "rejected" && (
-                                    <button
-                                      onClick={() => handleStartWork(s.subtask_id)}
-                                      disabled={processingId === s.subtask_id}
-                                      className="px-3 py-1.5 bg-yellow-600 text-white text-xs rounded-lg hover:bg-yellow-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 min-w-16 justify-center order-1"
-                                    >
-                                      {processingId === s.subtask_id ? (
-                                        <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                                      ) : (
-                                        "Revisi"
-                                      )}
-                                    </button>
-                                  )}
-
-                                  {s.status === "review" && (
-                                    <>
-                                      {!isOwner ? (
-                                        <div className="flex gap-2 order-1">
-                                          <button
-                                            onClick={() => handleReviewSubtask(s.subtask_id, "approved")} 
-                                            disabled={processingId === s.subtask_id}
-                                            className="px-3 py-1.5 bg-green-600 text-white text-xs rounded-lg hover:bg-green-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
-                                          >
-                                            {processingId === s.subtask_id ? (
-                                              <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                                            ) : (
-                                              "Approve"
-                                            )}
-                                          </button>
-                                          <button
-                                            onClick={() => handleReviewSubtask(s.subtask_id, "rejected")}
-                                            disabled={processingId === s.subtask_id}
-                                            className="px-3 py-1.5 bg-red-600 text-white text-xs rounded-lg hover:bg-red-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
-                                          >
-                                            {processingId === s.subtask_id ? (
-                                              <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                                            ) : (
-                                              "Reject"
-                                            )}
-                                          </button>
-                                        </div>
-                                      ) : (
-                                        <span className="text-blue-700 font-semibold text-xs flex items-center gap-1 order-1">
-                                          <Clock size={12} />
-                                          Menunggu review...
-                                        </span>
-                                      )}
-                                    </>
-                                  )}
-
-                                  {s.status === "done" && (
-                                    <span className="text-green-700 font-semibold text-xs flex items-center gap-1 order-1">
-                                      <CheckCircle size={14} />
-                                      Selesai
-                                    </span>
-                                  )}
-
-                                  {!isOwner && (s.status === "in_progress" || s.status === "todo") && (
-                                    <button
-                                      onClick={() => openReportModal("subtask", s.subtask_id)}
-                                      className="flex items-center gap-1 px-2 py-1 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 text-xs font-medium transition-colors order-2"
-                                    >
-                                      <AlertCircle size={12} />
-                                      Report
-                                    </button>
-                                  )}
-                                </div>
                               </div>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     ) : (
                       <div className="text-center py-8 bg-gray-50 rounded-xl border border-gray-200">

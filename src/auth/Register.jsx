@@ -29,48 +29,58 @@ export default function Register() {
   };
 
   // handle submit
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setIsLoading(true);
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  setIsLoading(true);
 
-    // Client-side password confirmation check
-    if (form.password !== form.confirm_password) {
-      setMessage("⚠️ Password dan konfirmasi password tidak cocok");
-      setIsLoading(false);
-      return;
-    }
+  if (form.password !== form.confirm_password) {
+    setMessage("⚠️ Password dan konfirmasi password tidak cocok");
+    setIsLoading(false);
+    return;
+  }
 
-    try {
-      const data = await apiFetch("/auth/register", {
-        method: "POST",
-        body: JSON.stringify(form),
+  try {
+    const payload = {
+      username: form.username,
+      password: form.password,
+      full_name: form.full_name,
+      email: form.email,
+    };
+
+    console.log("Submitting registration with payload:", payload);
+
+    const data = await apiFetch("/auth/register", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+
+    if (data.errors) {
+      setMessage("❌ " + data.errors.map((err) => err.msg).join(", "));
+    } else if (data.error) {
+      setMessage("⚠️ " + data.error);
+    } else {
+      setMessage("✅ " + data.message);
+
+      setForm({
+        username: "",
+        password: "",
+        confirm_password: "",
+        full_name: "",
+        email: "",
       });
 
-      if (data.errors) {
-        setMessage("❌ " + data.errors.map((err) => err.msg).join(", "));
-      } else if (data.error) {
-        setMessage("⚠️ " + data.error);
-      } else {
-        setMessage("✅ " + data.message);
-
-        setForm({ 
-          username: "", 
-          password: "", 
-          confirm_password: "", 
-          full_name: "", 
-          email: "" 
-        });
-
-        setTimeout(() => {
-          navigate("/"); // ✅ redirect ke halaman login
-        }, 1500);
-      }
-    } catch (err) {
-      setMessage("⚠️ Gagal koneksi server: " + err.message);
-    } finally {
-      setIsLoading(false);
+      setTimeout(() => {
+        navigate("/");
+      }, 1500);
     }
-  };
+  } catch (err) {
+    setMessage("⚠️ Gagal koneksi server: " + err.message);
+  } finally {
+    setIsLoading(false);
+  }
+};
+
+
 
   const getMessageType = (msg) => {
     if (msg.includes("✅")) return "success";
