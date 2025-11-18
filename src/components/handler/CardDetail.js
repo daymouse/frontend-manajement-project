@@ -75,24 +75,22 @@ export const useCardItemLeader = (card, onCardDeleted) => {
 
   // === DELETE CARD ===
   const handleDeleteCard = async () => {
-    if (!detail) return;
-    
-    setProcessing(true);
+  if (!detail) return;
+  
+  setProcessing(true);
     try {
-      console.log("🗑️ Menghapus card dengan ID:", detail.card_id);
       await apiFetch(`/card/card/${detail.card_id}`, {
         method: "DELETE",
       });
 
       showAlert("🗑️ Card berhasil dihapus!");
-      
-      // Tutup modal
-      handleClose();
-      
-      // Panggil callback untuk refresh parent component
+
       if (onCardDeleted) {
         onCardDeleted(detail.card_id);
       }
+      
+      // Baru kemudian tutup modal
+      handleClose();
       
     } catch (err) {
       console.error("❌ Gagal menghapus card:", err);
