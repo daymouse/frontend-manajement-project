@@ -9,14 +9,14 @@ export default function ProjectRoleRoute() {
 
   useEffect(() => {
     let mounted = true;
+    setRoleApp(null);
+    setLoading(true);
 
     const checkRole = async () => {
       try {
         const data = await apiFetch(`/project/${board_id}/member-role`);
-        const userRole = data.role || data.data?.role;
-        console.log("🎯 Role:", userRole);
+        const userRole = data.role;
 
-        // Lazy import berdasarkan role
         if (userRole === "admin" || userRole === "super_admin") {
           const { default: AdminApp } = await import("../../board/BoardsAdminApp.jsx");
           if (mounted) setRoleApp(() => AdminApp);
@@ -27,7 +27,6 @@ export default function ProjectRoleRoute() {
           if (mounted) setRoleApp(() => () => <div>Access denied</div>);
         }
       } catch (err) {
-        console.error("🔥 Gagal ambil role:", err);
         if (mounted) setRoleApp(() => () => <div>Access denied</div>);
       } finally {
         if (mounted) setLoading(false);
@@ -35,10 +34,7 @@ export default function ProjectRoleRoute() {
     };
 
     checkRole();
-
-    return () => {
-      mounted = false; // cleanup
-    };
+    return () => (mounted = false);
   }, [board_id]);
 
   if (loading) return <div>Checking access...</div>;
@@ -46,7 +42,7 @@ export default function ProjectRoleRoute() {
   const RoleComponent = RoleApp;
   return (
     <Suspense fallback={<div>Loading Board...</div>}>
-      {RoleComponent ? <RoleComponent /> : <div>Access denied</div>}
+      {RoleComponent ? <RoleComponent key={`${board_id}-${RoleApp}`} /> : <div>Access denied</div>}
     </Suspense>
   );
 }
