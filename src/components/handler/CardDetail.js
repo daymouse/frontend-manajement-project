@@ -79,6 +79,7 @@ export const useCardItemLeader = (card, onCardDeleted) => {
     
     setProcessing(true);
     try {
+      console.log("🗑️ Menghapus card dengan ID:", detail.card_id);
       await apiFetch(`/card/card/${detail.card_id}`, {
         method: "DELETE",
       });
@@ -92,12 +93,6 @@ export const useCardItemLeader = (card, onCardDeleted) => {
       if (onCardDeleted) {
         onCardDeleted(detail.card_id);
       }
-      
-      // Emit socket event untuk update real-time
-      socket.emit("card_deleted", { 
-        card_id: detail.card_id, 
-        board_id: board_id 
-      });
       
     } catch (err) {
       console.error("❌ Gagal menghapus card:", err);
