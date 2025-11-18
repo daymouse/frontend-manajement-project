@@ -6,6 +6,7 @@ export default function ProjectRoleRoute() {
   const { board_id } = useParams();
   const [RoleApp, setRoleApp] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null); // ⬅️ tambah error state
 
   useEffect(() => {
     let mounted = true;
@@ -18,7 +19,7 @@ export default function ProjectRoleRoute() {
         const userRole = data.role || data.data?.role;
         console.log("🎯 Role:", userRole);
 
-        // Lazy import berdasarkan role
+        // Cek role & load komponen
         if (userRole === "admin" || userRole === "super_admin") {
           const { default: AdminApp } = await import("../../board/BoardsAdminApp.jsx");
           if (mounted) setRoleApp(() => AdminApp);
@@ -26,24 +27,37 @@ export default function ProjectRoleRoute() {
           const { default: MemberApp } = await import("../../board/BoardsMemberApp.jsx");
           if (mounted) setRoleApp(() => MemberApp);
         } else {
-          if (mounted) setRoleApp(() => () => <div>Access denied</div>);
+          if (mounted) {
+            setError("🚫 Anda tidak memiliki akses ke board ini.");
+            setRoleApp(null);
+          }
         }
+
       } catch (err) {
         console.error("🔥 Gagal ambil role:", err);
-        if (mounted) setRoleApp(() => () => <div>Access denied</div>);
+        if (mounted) {
+          setError("❌ Terjadi kesalahan memeriksa akses.");
+          setRoleApp(null);
+        }
       } finally {
         if (mounted) setLoading(false);
       }
     };
 
     checkRole();
-
-    return () => {
-      mounted = false; // cleanup
-    };
+    return () => (mounted = false);
   }, [board_id]);
 
   if (loading) return <div>Checking access...</div>;
+
+  // ⛔ Tampilkan halaman error jika tidak punya akses
+  if (error) {
+    return (
+      <div style={{ textAlign: "center", padding: "40px", fontSize: "20px", color: "red" }}>
+        {error}
+      </div>
+    );
+  }
 
   const RoleComponent = RoleApp;
   return (
