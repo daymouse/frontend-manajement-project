@@ -53,6 +53,24 @@ export default function Task() {
     }
   };
 
+  // 🔹 Handler untuk ketika card dihapus
+  const handleCardDeleted = (deletedCardId) => {
+    console.log("🗑️ Card dihapus dengan ID:", deletedCardId);
+    
+    // Update state tasks tanpa perlu refresh
+    setTasks(prevTasks => {
+      const updatedTasks = { ...prevTasks };
+      
+      // Hapus card dari semua kolom
+      Object.keys(updatedTasks).forEach(status => {
+        updatedTasks[status] = updatedTasks[status].filter(
+          card => card.card_id !== deletedCardId
+        );
+      });
+      
+      return updatedTasks;
+    });
+  };
 
   useEffect(() => {
     if (board_id) {
@@ -132,6 +150,23 @@ export default function Task() {
       }
     });
 
+    // 🔹 Listen untuk card deleted event - YANG DIPERBAIKI
+    socket.on("card_deleted", (data) => {
+      console.log("🗑️ [SOCKET] card_deleted received in Task.js:", data);
+      const { card_id, board_id: eventBoardId } = data;
+      
+      // Pastikan event ini untuk board yang sedang dibuka
+      if (String(eventBoardId) === String(board_id)) {
+        console.log("🔄 Card dihapus oleh user lain, update UI...");
+        
+        // Gunakan handler yang sama untuk konsistensi
+        handleCardDeleted(card_id);
+        
+        // Optional: Tampilkan notifikasi
+        console.log("🗑️ Card telah dihapus oleh user lain!");
+      }
+    });
+
     // 🔹 Timlead menerima notifikasi approve
     socket.on("project_approved", (data) => {
       console.log("📡 [SOCKET] project_approved:", data);
@@ -205,12 +240,13 @@ export default function Task() {
         "project_approved",
         "card_status_review",
         "card_status_done",
-        "project_review_requested"
+        "project_review_requested",
+        "card_deleted", // 🔹 Tambahkan event card_deleted
       ];
       
       events.forEach(event => socket.off(event));
     };
-  }, [board_id]);
+  }, [board_id, handleCardDeleted]); // 🔹 Tambahkan handleCardDeleted ke dependencies
 
   // 🔹 Endpoint request review project
   const handleReviewProject = async () => {
@@ -327,7 +363,11 @@ export default function Task() {
 
             <div className="flex-1 bg-white rounded-b-xl shadow p-3 space-y-3 min-h-[200px]">
               {tasks[col.key].map((task) => (
-                <CardItem key={task.card_id} card={task} />
+                <CardItem 
+                  key={task.card_id} 
+                  card={task} 
+                  onCardDeleted={handleCardDeleted} // 🔹 TAMBAHKAN INI
+                />
               ))}
             </div>
           </div>

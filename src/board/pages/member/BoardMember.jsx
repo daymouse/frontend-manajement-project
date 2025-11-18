@@ -15,6 +15,30 @@ export default function Task() {
   });
   const [selectedCardId, setSelectedCardId] = useState(null);
 
+  // 🔹 Handler untuk ketika card dihapus
+  const handleCardDeleted = (deletedCardId) => {
+    console.log("🗑️ Card dihapus dengan ID:", deletedCardId);
+    
+    // Update state tasks tanpa perlu refresh
+    setTasks(prevTasks => {
+      const updatedTasks = { ...prevTasks };
+      
+      // Hapus card dari semua kolom
+      Object.keys(updatedTasks).forEach(status => {
+        updatedTasks[status] = updatedTasks[status].filter(
+          card => card.card_id !== deletedCardId
+        );
+      });
+      
+      return updatedTasks;
+    });
+
+    // Jika card yang sedang dibuka di modal dihapus, tutup modal
+    if (selectedCardId === deletedCardId) {
+      setSelectedCardId(null);
+    }
+  };
+
   const fetchCards = async () => {
     try {
       const res = await apiFetch(`/card/board/${board_id}`, "GET");
@@ -108,6 +132,23 @@ export default function Task() {
       }
     });
 
+    // 🔹 PERBAIKAN: Socket listener untuk card_deleted
+    socket.on("card_deleted", (data) => {
+      console.log("🗑️ [SOCKET] card_deleted received in Member Task:", data);
+      const { card_id, board_id: eventBoardId } = data;
+      
+      // Pastikan event ini untuk board yang sedang dibuka
+      if (String(eventBoardId) === String(board_id)) {
+        console.log("🔄 Card dihapus oleh user lain, update UI...");
+        
+        // Gunakan handler yang sama untuk konsistensi
+        handleCardDeleted(card_id);
+        
+        // Optional: Tampilkan notifikasi
+        console.log("🗑️ Card telah dihapus oleh user lain!");
+      }
+    });
+
     return () => {
       socket.emit("leave_board", board_id);
       
@@ -122,11 +163,12 @@ export default function Task() {
         "blocker_solved",
         "card_updated",
         "card_assigned",
+        "card_deleted",
       ];
       
       events.forEach(event => socket.off(event));
     };
-  }, [board_id]);
+  }, [board_id, handleCardDeleted]); // 🔹 Tambahkan handleCardDeleted ke dependencies
 
   const columns = [
     { key: "todo", label: "To Do", color: "bg-gray-100" },
@@ -324,6 +366,7 @@ export default function Task() {
           cardId={selectedCardId}
           onClose={() => setSelectedCardId(null)}
           onCardUpdate={fetchCards} // Refresh cards ketika card diupdate di modal
+          onCardDeleted={handleCardDeleted} // 🔹 TAMBAHKAN INI untuk handle delete dari modal
         />
       )}
     </div>

@@ -3,7 +3,7 @@ import { apiFetch } from "../../Server";
 import { socket } from "../../socket";
 import { useAlert } from "../AlertContext"; 
 
-export default function useCardHandlers(cardId, commentInputRef) {
+export default function useCardHandlers(cardId, commentInputRef, onCardDeleted) {
   const { showAlert } = useAlert();
   const [card, setCard] = useState(null);
   const [comments, setComments] = useState([]);
@@ -311,6 +311,28 @@ export default function useCardHandlers(cardId, commentInputRef) {
       });
     });
 
+    // 🔹 PERBAIKAN: Socket listener untuk card_deleted - FIXED VERSION
+    socket.on("card_deleted", (data) => {
+      console.log("🗑️ [SOCKET] card_deleted received in useCardHandlers:", data);
+      const { card_id, board_id: eventBoardId } = data;
+      
+      // Pastikan event ini untuk card yang sedang dibuka
+      if (String(card_id) === String(cardId)) {
+        console.log("🔄 Card ini dihapus oleh user lain, menutup modal...");
+        showAlert("🗑️ Card telah dihapus!");
+        
+        // Reset state
+        setCard(null);
+        setComments([]);
+        
+        // Panggil callback untuk memberitahu parent component
+        if (onCardDeleted) {
+          console.log("🔄 Memanggil onCardDeleted dengan ID:", card_id);
+          onCardDeleted(card_id);
+        }
+      }
+    });
+
     // Card status events - FIXED: hanya untuk card ini
     socket.on("card_status_inProgres", (data) => {
       if (data.card_id === cardId) {
@@ -429,12 +451,12 @@ export default function useCardHandlers(cardId, commentInputRef) {
         "blocker_solved", "comment:new", "comment:updated", 
         "comment:deleted", "comment_deleted", "comment_typing", 
         "comment:reject", "card_status_inProgres", "card_status_review",
-        "card_status_done", "card_status_revisi"
+        "card_status_done", "card_status_revisi", "card_deleted",
       ];
       
       events.forEach(event => socket.off(event));
     };
-  }, [cardId, card?.subtasks, currentUser?.user_id]);
+  }, [cardId, card?.subtasks, currentUser?.user_id, onCardDeleted, showAlert]);
 
   /* =====================================================
      🔍 SUBTASK SUGGESTIONS HANDLER

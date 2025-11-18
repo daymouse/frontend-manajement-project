@@ -75,21 +75,43 @@ export const useCardItemLeader = (card, onCardDeleted) => {
 
   // === DELETE CARD ===
   const handleDeleteCard = async () => {
-  if (!detail) return;
-  
-  setProcessing(true);
+    if (!detail) return;
+    
+    setProcessing(true);
     try {
+      console.log("🗑️ Menghapus card dengan ID:", detail.card_id);
+      
+      // Kirim socket event sebelum menghapus (optional, untuk real-time notification)
+      socket.emit("card_deleting", {
+        card_id: detail.card_id,
+        board_id: board_id,
+        card_title: detail.card_title
+      });
+
       await apiFetch(`/card/card/${detail.card_id}`, {
         method: "DELETE",
       });
 
+      console.log("✅ Card berhasil dihapus dari database");
+      
+      // Kirim socket event setelah berhasil menghapus
+      socket.emit("card_deleted", {
+        card_id: detail.card_id,
+        board_id: board_id,
+        card_title: detail.card_title,
+        type: "delete_card",
+        message: `Card "${detail.card_title}" telah dihapus`
+      });
+
       showAlert("🗑️ Card berhasil dihapus!");
 
+      // Panggil callback untuk update parent component
       if (onCardDeleted) {
+        console.log("🔄 Memanggil onCardDeleted dengan ID:", detail.card_id);
         onCardDeleted(detail.card_id);
       }
       
-      // Baru kemudian tutup modal
+      // Tutup modal
       handleClose();
       
     } catch (err) {
@@ -533,9 +555,13 @@ export const useCardItemLeader = (card, onCardDeleted) => {
       });
     });
 
-    // Card deleted event
-    socket.on("card_deleted", ({ card_id }) => {
-      if (card_id === detail.card_id) {
+    // Card deleted event - dari server
+    socket.on("card_deleted", (data) => {
+      console.log("🗑️ [SOCKET] card_deleted received:", data);
+      const { card_id, board_id: eventBoardId } = data;
+      
+      if (card_id === detail.card_id && String(eventBoardId) === String(board_id)) {
+        console.log("🔄 Card ini dihapus oleh user lain, menutup modal...");
         showAlert("🗑️ Card telah dihapus!");
         handleClose();
         if (onCardDeleted) {
