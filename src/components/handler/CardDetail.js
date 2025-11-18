@@ -665,7 +665,7 @@ export const useCardItemLeader = (card, onCardDeleted) => {
         "blocker_reported", "blocker_solved", "card_deleted",
         "comment:new", "comment:updated", "comment:deleted", 
         "comment_deleted", "comment:reject", "comment_typing", 
-        "card_status_changed"
+        "card_status_changed",
       ];
       
       events.forEach(event => socket.off(event));

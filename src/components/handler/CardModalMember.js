@@ -343,7 +343,7 @@ export default function useCardHandlers(cardId, commentInputRef, onCardDeleted) 
       }
     });
 
-    socket.on("card_status_review", (data) => {
+    socket.on("card_status_changed", (data) => {
       if (data.card_id === cardId) {
         setCard(prev => ({
           ...prev,
@@ -450,7 +450,7 @@ export default function useCardHandlers(cardId, commentInputRef, onCardDeleted) 
         "subtask_assigned", "subtask_deleted", "blocker_reported", 
         "blocker_solved", "comment:new", "comment:updated", 
         "comment:deleted", "comment_deleted", "comment_typing", 
-        "comment:reject", "card_status_inProgres", "card_status_review",
+        "comment:reject", "card_status_inProgres", "card_status_changed",
         "card_status_done", "card_status_revisi", "card_deleted",
       ];
       

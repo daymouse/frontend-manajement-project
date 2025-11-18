@@ -79,8 +79,8 @@ export default function Task() {
       fetchCards();
     });
 
-    socket.on("card_review_status", (data) => {
-      console.log("📡 [SOCKET] card_review_status event:", data);
+    socket.on("card_status_changed", (data) => {
+      console.log("📡 [SOCKET] card_status_changed event:", data);
       // Refresh cards karena status card mungkin berubah
       fetchCards();
     });
@@ -156,7 +156,7 @@ export default function Task() {
       const events = [
         "card_status_inProgress",
         "subtask_status_changed",
-        "card_review_status",
+        "card_status_changed",
         "card_status_revisi",
         "card_doneOrInProgres",
         "blocker_reported",
