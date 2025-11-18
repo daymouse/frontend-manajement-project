@@ -4,7 +4,7 @@ import { socket } from "./../../socket";
 import { useParams } from "react-router-dom";
 import { useAlert } from "../AlertContext";
 
-export const useCardItemLeader = (card) => {
+export const useCardItemLeader = (card, onCardDeleted) => {
   const { showAlert } = useAlert();
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState(null);
@@ -29,6 +29,9 @@ export const useCardItemLeader = (card) => {
   
   // New state for rejection mode
   const [rejectingSubtask, setRejectingSubtask] = useState(null);
+  
+  // New state for delete modal
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   const inputRefs = useRef({});
   const commentsContainerRef = useRef(null);
@@ -67,6 +70,42 @@ export const useCardItemLeader = (card) => {
     setTaggedSubtask(null);
     setRejectingSubtask(null);
     setSelectedSubtaskId(null);
+    setShowDeleteModal(false);
+  };
+
+  // === DELETE CARD ===
+  const handleDeleteCard = async () => {
+    if (!detail) return;
+    
+    setProcessing(true);
+    try {
+      await apiFetch(`/card/card/${detail.card_id}`, {
+        method: "DELETE",
+      });
+
+      showAlert("🗑️ Card berhasil dihapus!");
+      
+      // Tutup modal
+      handleClose();
+      
+      // Panggil callback untuk refresh parent component
+      if (onCardDeleted) {
+        onCardDeleted(detail.card_id);
+      }
+      
+      // Emit socket event untuk update real-time
+      socket.emit("card_deleted", { 
+        card_id: detail.card_id, 
+        board_id: board_id 
+      });
+      
+    } catch (err) {
+      console.error("❌ Gagal menghapus card:", err);
+      showAlert("Gagal menghapus card.");
+    } finally {
+      setProcessing(false);
+      setShowDeleteModal(false);
+    }
   };
 
   const handleSubtaskAction = async (subtask_id, action) => {
@@ -501,6 +540,17 @@ export const useCardItemLeader = (card) => {
       });
     });
 
+    // Card deleted event
+    socket.on("card_deleted", ({ card_id }) => {
+      if (card_id === detail.card_id) {
+        showAlert("🗑️ Card telah dihapus!");
+        handleClose();
+        if (onCardDeleted) {
+          onCardDeleted(card_id);
+        }
+      }
+    });
+
     // =====================================================
     // 🗣️ COMMENT SOCKET EVENTS - DIPERBAIKI UNTUK KONSISTENSI
     // =====================================================
@@ -593,14 +643,15 @@ export const useCardItemLeader = (card) => {
       // PERBAIKAN: Cleanup semua event listeners dengan tepat dan konsisten
       const events = [
         "subtask_status_changed", "subtask_added", "subtask_assigned",
-        "blocker_reported", "blocker_solved", "comment:new", 
-        "comment:updated", "comment:deleted", "comment_deleted", 
-        "comment:reject", "comment_typing", "card_status_changed"
+        "blocker_reported", "blocker_solved", "card_deleted",
+        "comment:new", "comment:updated", "comment:deleted", 
+        "comment_deleted", "comment:reject", "comment_typing", 
+        "card_status_changed"
       ];
       
       events.forEach(event => socket.off(event));
     };
-  }, [detail, board_id, currentUser?.user_id]);
+  }, [detail, board_id, currentUser?.user_id, onCardDeleted]);
 
   // Auto scroll comments when new comment added
   useEffect(() => {
@@ -636,6 +687,9 @@ export const useCardItemLeader = (card) => {
     subtaskSuggestions,
     selectedSubtaskId,
     rejectingSubtask,
+    
+    // Delete modal state
+    showDeleteModal,
     
     // Refs
     inputRefs,
@@ -673,6 +727,10 @@ export const useCardItemLeader = (card) => {
     // Rejection handlers
     handleFinalizeRejection,
     handleCancelRejection,
+    
+    // Delete handlers
+    handleDeleteCard,
+    setShowDeleteModal,
     
     // Derived values
     allSubtasksDone

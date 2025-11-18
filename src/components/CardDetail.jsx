@@ -15,9 +15,10 @@ import {
   ChevronLeft,
   ChevronRight,
   MoreVertical,
+  Trash2,
 } from "lucide-react";
 
-export default function CardItemLeader({ card }) {
+export default function CardItemLeader({ card, onCardDeleted }) {
   const {
     // State
     open,
@@ -39,6 +40,7 @@ export default function CardItemLeader({ card }) {
     selectedSubtaskId,
     rejectingSubtask,
     allSubtasksDone,
+    showDeleteModal,
     
     // Refs
     inputRefs,
@@ -68,7 +70,9 @@ export default function CardItemLeader({ card }) {
     setSelectedSubtaskId,
     handleFinalizeRejection,
     handleCancelRejection,
-  } = useCardItemLeader(card);
+    handleDeleteCard,
+    setShowDeleteModal,
+  } = useCardItemLeader(card, onCardDeleted);
 
   const dominant = "#4f46e5";
   const [showDetails, setShowDetails] = useState(false);
@@ -172,9 +176,18 @@ export default function CardItemLeader({ card }) {
 
   const renderHeader = () => (
     <div className="mb-6">
-      <h1 className="text-xl sm:text-2xl font-bold text-gray-800 mb-2">
-        {detail.card_title}
-      </h1>
+      <div className="flex justify-between items-start">
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-800 mb-2">
+          {detail.card_title}
+        </h1>
+        <button
+          onClick={() => setShowDeleteModal(true)}
+          className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+          title="Hapus Card"
+        >
+          <Trash2 size={18} />
+        </button>
+      </div>
       <p className="text-gray-600 text-sm sm:text-base">
         {detail.description || "Tidak ada deskripsi."}
       </p>
@@ -817,6 +830,85 @@ export default function CardItemLeader({ card }) {
     </AnimatePresence>
   );
 
+  const renderDeleteModal = () => (
+    <AnimatePresence>
+      {showDeleteModal && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
+        >
+          <motion.div
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.9, opacity: 0 }}
+            className="bg-white w-full max-w-md rounded-2xl p-6 shadow-xl"
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                <Trash2 className="text-red-600" size={20} />
+              </div>
+              <div>
+                <h3 className="font-semibold text-gray-800 text-lg">
+                  Hapus Card
+                </h3>
+                <p className="text-gray-600 text-sm">
+                  Apakah Anda yakin ingin menghapus card ini?
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-4">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="text-red-600 mt-0.5 flex-shrink-0" size={16} />
+                <div>
+                  <p className="text-red-700 font-medium text-sm">Tindakan ini tidak dapat dibatalkan!</p>
+                  <p className="text-red-600 text-xs mt-1">
+                    Semua data yang terkait dengan card ini akan dihapus permanen, termasuk:
+                  </p>
+                  <ul className="text-red-600 text-xs list-disc list-inside mt-1 space-y-1">
+                    <li>Semua subtask dan blocker subtask</li>
+                    <li>Komentar dan aktivitas</li>
+                    <li>Assignments dan time logs</li>
+                    <li>Card blockers</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setShowDeleteModal(false)}
+                className="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded-xl hover:bg-gray-50 transition-colors font-medium"
+                disabled={processing}
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleDeleteCard}
+                disabled={processing}
+                className="px-4 py-2 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white text-sm rounded-xl transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed font-medium shadow-lg shadow-red-500/25 flex items-center gap-2"
+              >
+                {processing ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    Menghapus...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={16} />
+                    Hapus Card
+                  </>
+                )}
+              </button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+
   const renderMainModal = () => (
     <AnimatePresence>
       {open && (
@@ -870,6 +962,7 @@ export default function CardItemLeader({ card }) {
       {renderCardPreview()}
       {renderMainModal()}
       {renderBlockerModal()}
+      {renderDeleteModal()}
     </>
   );
 }
