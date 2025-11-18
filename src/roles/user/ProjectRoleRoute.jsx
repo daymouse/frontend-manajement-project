@@ -14,6 +14,7 @@ export default function ProjectRoleRoute() {
 
     const checkRole = async () => {
       try {
+        console.log("🔍 board_id:", board_id);
         const data = await apiFetch(`/project/${board_id}/member-role`, "GET");
         const userRole = data?.role;
 
