@@ -18,9 +18,11 @@ export default function ProjectRoleRoute() {
         const userRole = data.role;
 
         if (userRole === "admin" || userRole === "super_admin") {
+          onsole.log("📦 [ProjectRoleRoute] Loading for board:", userRole);
           const { default: AdminApp } = await import("../../board/BoardsAdminApp.jsx");
           if (mounted) setRoleApp(() => AdminApp);
         } else if (userRole === "member") {
+          console.log("📦 [ProjectRoleRoute] Loading for board:", userRole);
           const { default: MemberApp } = await import("../../board/BoardsMemberApp.jsx");
           if (mounted) setRoleApp(() => MemberApp);
         } else {
