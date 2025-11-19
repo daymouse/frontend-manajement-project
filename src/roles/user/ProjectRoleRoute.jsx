@@ -1,46 +1,52 @@
 import { useParams } from "react-router-dom";
-import { useEffect, useState, Suspense, lazy } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { apiFetch } from "../../Server";
-
-// Lazy load normal untuk pemisahan bundle (tidak berdasarkan role)
-const BoardsAdminApp = lazy(() => import("../../board/BoardsAdminApp.jsx"));
-const BoardsMemberApp = lazy(() => import("../../board/BoardsMemberApp.jsx"));
 
 export default function ProjectRoleRoute() {
   const { board_id } = useParams();
-  const [role, setRole] = useState(null);
+  const [RoleApp, setRoleApp] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let mounted = true;
+
     const checkRole = async () => {
       try {
-        const data = await apiFetch(`/project/${board_id}/member-role`, "GET");
+        const data = await apiFetch(`/project/${board_id}/member-role`);
         const userRole = data.role || data.data?.role;
+        console.log("🎯 Role:", userRole);
 
-        console.log("🎯 Role ditemukan:", userRole);
-        setRole(userRole);
+        // Lazy import berdasarkan role
+        if (userRole === "admin" || userRole === "super_admin") {
+          const { default: AdminApp } = await import("../../board/BoardsAdminApp.jsx");
+          if (mounted) setRoleApp(() => AdminApp);
+        } else if (userRole === "member") {
+          const { default: MemberApp } = await import("../../board/BoardsMemberApp.jsx");
+          if (mounted) setRoleApp(() => MemberApp);
+        } else {
+          if (mounted) setRoleApp(() => () => <div>Access denied</div>);
+        }
       } catch (err) {
         console.error("🔥 Gagal ambil role:", err);
-        setRole("denied");
+        if (mounted) setRoleApp(() => () => <div>Access denied</div>);
       } finally {
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
     };
 
     checkRole();
+
+    return () => {
+      mounted = false; // cleanup
+    };
   }, [board_id]);
 
   if (loading) return <div>Checking access...</div>;
 
+  const RoleComponent = RoleApp;
   return (
     <Suspense fallback={<div>Loading Board...</div>}>
-      {role === "admin" || role === "super_admin" ? (
-        <BoardsAdminApp />
-      ) : role === "member" ? (
-        <BoardsMemberApp />
-      ) : (
-        <div>Access Denied</div>
-      )}
+      {RoleComponent ? <RoleComponent /> : <div>Access denied</div>}
     </Suspense>
   );
 }
