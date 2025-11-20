@@ -823,16 +823,6 @@ export default function ProjectDetail() {
               
               {report && (
                 <div className="flex gap-2">
-                  {/* Tombol Export Excel */}
-                  <button 
-                    onClick={handleExportExcel}
-                    disabled={exporting.excel}
-                    className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-3xl hover:bg-green-600 disabled:opacity-50 transition-colors font-medium text-sm whitespace-nowrap"
-                  >
-                    <FileSpreadsheet className="w-4 h-4" />
-                    {exporting.excel ? "Exporting..." : "Excel"}
-                  </button>
-
                   {/* Tombol Export PDF Data */}
                   <button 
                     onClick={handleExportPDF}
